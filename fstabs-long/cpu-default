@@ -1,0 +1,2 @@
+none /mnt/root tmpfs nodev,nosuid,noexec,nodiratime,size=2048M 0 0
+/tmp/cpu/tmp /mnt/9 none defaults,bind 0 0
