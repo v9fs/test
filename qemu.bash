@@ -32,8 +32,8 @@ ${QEMU} -kernel \
     -device virtio-rng-pci,rng=rng0 \
     -device virtio-net-pci,netdev=n1 \
     -netdev user,id=n1,hostfwd=tcp:127.0.0.1:17010-:17010,net=192.168.1.0/24,host=192.168.1.1 \
-    -serial mon:stdio \
+    -serial file:qemu.log \
     -fsdev local,security_model=passthrough,id=fsdev0,path=/tmp \
     -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare \
     ${EXTRA} \
-    -nographic
+    -daemonize -display none -pidfile qemu.pid
