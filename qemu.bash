@@ -11,13 +11,15 @@ then
     export QEMU="qemu-system-aarch64"
     export KERNEL="/tmp/Image"
     export MACHINE=virt
-    export EXTRA="-append \"earlycon console=ttyAMA0\""
+    export APPEND="earlycon console=ttyAMA0"
+    export EXTRA=""
 elif [ $ARCH == "x86_64" ]
 then
     export QEMU="qemu-system-x86_64"
     export KERNEL="/tmp/Image"
     export MACHINE=q35
-    export EXTRA="-append \"console=ttyS0\" -debugcon file:debug.log -global isa-debugcon.iobase=0x402"
+    export APPEND="console=ttyS0"
+    export EXTRA="-debugcon file:debug.log -global isa-debugcon.iobase=0x402"
 fi
 
 ${QEMU} -kernel \
@@ -35,5 +37,6 @@ ${QEMU} -kernel \
     -serial file:qemu.log \
     -fsdev local,security_model=passthrough,id=fsdev0,path=/tmp \
     -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare \
+    -append "${APPEND}" \
     ${EXTRA} \
     -daemonize -display none -pidfile qemu.pid
