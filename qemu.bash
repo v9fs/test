@@ -3,7 +3,7 @@
 # ^a+x to terminate
 
 export ARCH=${ARCH:-`uname -m`}
-export KERNEL=${KERNEL:-"/tmp/Image"}
+export KERNEL=${KERNEL:-"/workspaces/linux/.build/arch/arm64/boot/Image"}
 export INITRD=${INITRD:-"/home/v9fs-test/initrd.cpio"}
 export LOG=${QEMULOG:-"/home/v9fs-test/qemu.log"}
 export PIDFILE=${PIDFILE:-"/home/v9fs-test/qemu.pid"}
