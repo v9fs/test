@@ -1,2 +1,0 @@
-none /mnt/root tmpfs nodev,nosuid,noexec,nodiratime,size=2048M 0 0
-hostshare /mnt/9 9p trans=virtio,version=9p2000.L,cache=readahead,debug=0x1 0 0

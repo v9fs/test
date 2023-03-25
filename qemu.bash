@@ -2,9 +2,15 @@
 
 # ^a+x to terminate
 
-export ARCH=`uname -m`
-export KERNEL="/tmp/Image"
-export INITRD="/home/v9fs-test/initrd.cpio"
+export ARCH=${ARCH:-`uname -m`}
+export KERNEL=${KERNEL:-"/tmp/Image"}
+export INITRD=${INITRD:-"/home/v9fs-test/initrd.cpio"}
+export LOG=${QEMULOG:-"/home/v9fs-test/qemu.log"}
+export PIDFILE=${PIDFILE:-"/home/v9fs-test/qemu.pid"}
+
+if test -f "${PIDFILE}"; then
+    kill `cat ${PIDFILE}`
+fi
 
 if [ $ARCH == "aarch64" ]
 then
@@ -34,9 +40,10 @@ ${QEMU} -kernel \
     -device virtio-rng-pci,rng=rng0 \
     -device virtio-net-pci,netdev=n1 \
     -netdev user,id=n1,hostfwd=tcp:127.0.0.1:17010-:17010,net=192.168.1.0/24,host=192.168.1.1 \
-    -serial file:qemu.log \
+    -serial file:${LOG} \
     -fsdev local,security_model=passthrough,id=fsdev0,path=/tmp \
     -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare \
     -append "${APPEND}" \
     ${EXTRA} \
-    -daemonize -display none -pidfile qemu.pid
+    -daemonize -display none -pidfile ${PIDFILE}
+

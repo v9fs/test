@@ -10,7 +10,7 @@ show
 run
 quit
 EOT
-) >logs/postmark.$STAMP.log 2>logs/postmark.$STAMP.err; then
+) > $LOG.log 2>&1; then
     echo "SUCCESS"
 else
     echo "FAIL"

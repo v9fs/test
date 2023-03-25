@@ -1,2 +1,0 @@
-none /mnt/root tmpfs nodev,nosuid,noexec,nodiratime,size=2048M 0 0
-192.168.1.1 /mnt/9 9p trans=tcp,version=9p2000.L,port=5640,aname=/tmp,uname=root,dfltuid=0,dfltgid=0,access=any,cache=none,debug=1 0 0
