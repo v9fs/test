@@ -48,7 +48,7 @@ do
     /usr/bin/time -f %e -o $LOG.time cpu --key /home/v9fs-test/.ssh/identity --fstab $f localhost $t 
   done | tee logs/${TIMESTAMP}/${tokens[0]}/${tokens[1]}/results.log
   if [ $CHECK -eq 1 ]; then
-    diff logs/${TIMESTAMP}/${tokens[0]}/${tokens[1]}/results.log good/${tokens[1]}/results.log
+    diff -b logs/${TIMESTAMP}/${tokens[0]}/${tokens[1]}/results.log good/${tokens[1]}/results.log
     error=$?
     if [ $error -eq 1 ]; then
       cleanup
