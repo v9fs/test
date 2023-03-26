@@ -3,7 +3,7 @@
 # ^a+x to terminate
 
 export ARCH=${ARCH:-`uname -m`}
-export KERNEL=${KERNEL:-"/workspaces/linux/.build/arch/arm64/boot/Image"}
+export KERNELBUILD=${KERNELBUILD:-"/workspaces/linux/.build/"}
 export INITRD=${INITRD:-"/home/v9fs-test/initrd.cpio"}
 export LOG=${QEMULOG:-"/home/v9fs-test/qemu.log"}
 export PIDFILE=${PIDFILE:-"/home/v9fs-test/qemu.pid"}
@@ -15,14 +15,14 @@ fi
 if [ $ARCH == "aarch64" ]
 then
     export QEMU="qemu-system-aarch64"
-    export KERNEL="/tmp/Image"
+    export KERNEL="${KERNELBUILD}/arch/arm64/boot/Image"
     export MACHINE=virt
     export APPEND="earlycon console=ttyAMA0"
     export EXTRA=""
 elif [ $ARCH == "x86_64" ]
 then
     export QEMU="qemu-system-x86_64"
-    export KERNEL="/tmp/Image"
+    export KERNEL="${KERNELBUILD}/arch/x86_64/boot/bzImage"
     export MACHINE=q35
     export APPEND="console=ttyS0"
     export EXTRA="-debugcon file:debug.log -global isa-debugcon.iobase=0x402"
