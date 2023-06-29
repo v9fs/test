@@ -3,6 +3,17 @@ name: Linux Kernel Build
 on:
   push:
   workflow_dispatch:
+    inputs:
+      repo:
+        description: 'repository path'
+        required: true
+        default: 'v9fs/linux'
+        type: string
+      ref:
+        description: 'repository reference'
+        required: true
+        default: 'ericvh/for-next'
+        type: string
   workflow_call:
   pull_request:
     types: [opened, reopened]
@@ -15,6 +26,9 @@ jobs:
       options: -u root
     steps:
     - uses: actions/checkout@v3
+      with:
+        name:  ${{ inputs.repo }} 
+        ref: ${{ inputs.ref }}     
     - name: configure
       run: mkdir -p .build && make O=.build defconfig
     - name: make
