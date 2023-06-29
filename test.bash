@@ -10,7 +10,7 @@ export QEMUSTATE=0
 export CHECK=${3:-1}
 export TYPE=${2:-ci}
 
-if [ $TYPE -eq 'ci' ]; then
+if [ "$TYPE" = "ci" ]; then
 	export CHECK=${3:-1}
 else
 	export CHECK=${3:-0}
@@ -70,5 +70,5 @@ do
 done
 
 cleanup
-echo tests ${TESTS} ${TYPE} ${TIMESTAMP} done | tee logs/test.log
+echo tests ${TESTS} ${TYPE} ${TIMESTAMP} done
 exit 0
