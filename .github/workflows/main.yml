@@ -39,7 +39,7 @@ jobs:
         path: .build/arch/*/boot/*Image
         retention-days: 1
   test:
-    needs: build
+    needs: latency
     runs-on: self-hosted
     container:
       image: ghcr.io/v9fs/docker:latest
