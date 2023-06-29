@@ -7,7 +7,17 @@ mkdir -p logs/${TIMESTAMP}
 export QEMULOG=logs/${TIMESTAMP}/qemu.log
 export PIDFILE=/home/v9fs-test/qemu.pid
 export QEMUSTATE=0
-export CHECK=${2:-1}
+export CHECK=${3:-1}
+export TYPE=${2:-ci}
+
+if [ $TYPE -eq 'ci' ]; then
+	export CHECK=${3:-1}
+else
+	export CHECK=${3:-0}
+fi
+
+echo TYPE: ${TYPE} TESTS: ${TESTS}
+
 
 cleanup() {
   if test -f "${QEMULOG}"; then
@@ -41,7 +51,7 @@ do
   IFS="$OLDIFS"
   mkdir -p logs/${TIMESTAMP}/${tokens[0]}/${tokens[1]}
   echo running configuration ${tokens[0]} ${tokens[1]} ....
-  for t in tests/*
+  for t in tests/${TYPE}/*
   do
     echo -n ...running test `basename $t .bash` ...
     export LOG=logs/${TIMESTAMP}/${tokens[0]}/${tokens[1]}/`basename $t .bash`
@@ -60,5 +70,5 @@ do
 done
 
 cleanup
-echo tests ${TIMESTAMP} done
+echo tests ${TESTS} ${TYPE} ${TIMESTAMP} done | tee logs/test.log
 exit 0
