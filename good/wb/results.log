@@ -1,4 +1,4 @@
 ...running test dbench ...SUCCESS
 ...running test fsx ...SUCCESS
-...running test fsx-mmap ...FAIL
+...running test fsx-mmap ...SUCCESS
 ...running test postmark ...SUCCESS
