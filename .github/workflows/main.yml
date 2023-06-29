@@ -56,7 +56,7 @@ jobs:
         cd /home/v9fs-test/test
         git config --global --add safe.directory /home/v9fs-test/test
         git pull
-        ./test.bash short
+        ./test.bash short ci
         echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/tests/logs/tag
     - name: Store Logs
       uses: actions/upload-artifact@v3
@@ -64,3 +64,30 @@ jobs:
         name: test-results
         path: /home/v9fs-test/test/logs
         retention-days: 7
+  latency:
+    needs: build
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/v9fs/docker:latest
+      options: -u root
+    steps:
+    - uses: actions/download-artifact@v3
+      with:
+        name: kernel-image
+        path: .build/arch/*/boot/*Image
+    - name: link workspaces to scratch directory
+      run: mkdir -p /workspaces && ln -s `pwd` /workspaces/linux
+    - name: Test sweep
+      run: |
+        cd /home/v9fs-test/test
+        git config --global --add safe.directory /home/v9fs-test/test
+        git pull
+        ./test.bash short latency
+        echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/tests/logs/tag
+    - name: Store Logs
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: /home/v9fs-test/test/logs
+        retention-days: 7
+
