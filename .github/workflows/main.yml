@@ -1,7 +1,6 @@
 name: Linux Kernel Build
 
 on:
-  push:
   workflow_dispatch:
     inputs:
       repo:
@@ -14,8 +13,11 @@ on:
         required: true
         default: 'ericvh/for-next'
         type: string
+      resultstag:
+        description: 'how to tag results'
+        default: 'ci'
+        type: string
   workflow_call:
-
 jobs:
   build:
     runs-on: self-hosted
@@ -55,8 +57,8 @@ jobs:
         git config --global --add safe.directory /home/v9fs-test/test
         git pull
         ./test.bash short
+        echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/tests/logs/tag
     - name: Store Logs
-      if: ${{ failure() }}
       uses: actions/upload-artifact@v3
       with:
         name: test-results
