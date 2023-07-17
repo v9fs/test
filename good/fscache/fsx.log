@@ -1,0 +1,6 @@
+mapped writes DISABLED
+fsx: main: filesystem does not support fallocate punch hole, disabling: Operation not supported
+truncating to largest ever: 0x3645e
+truncating to largest ever: 0x3f958
+truncating to largest ever: 0x3f9e9
+All operations completed A-OK!

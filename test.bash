@@ -1,6 +1,6 @@
 #!/bin/bash
 export TESTS=${1:-smoke}
-export PATH_MNTDIR=/mnt/9
+export PATH_MNTDIR=/mnt/9/tmp
 export TESTBIN=/home/v9fs-test/diod/tests/kern
 export TIMESTAMP=`date +%s`
 mkdir -p logs/${TIMESTAMP}
@@ -43,6 +43,8 @@ else
 fi
 
 echo Starting tests ${TIMESTAMP}
+rm -f logs/current
+ln -s ${TIMESTAMP} logs/current
 for f in fstabs-${TESTS}/*
 do
   ft=`basename $f`

@@ -1,0 +1,9 @@
+fsx: main: filesystem does not support fallocate punch hole, disabling: Operation not supported
+truncating to largest ever: 0x3645e
+domapread: mmap: Invalid argument
+LOG DUMP (3 total operations):
+1(  1 mod 256): WRITE    0x13e76 thru 0x1b84e	(0x79d9 bytes) HOLE
+2(  2 mod 256): TRUNCATE UP	from 0x1b84f to 0x3645e
+3(  3 mod 256): MAPREAD  0x305e7 thru 0x309e3	(0x3fd bytes)
+Correct content saved for comparison
+(maybe hexdump "/mnt/9/tmp/testfile" vs "/mnt/9/tmp/testfile.fsxgood")

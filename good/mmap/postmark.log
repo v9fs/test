@@ -1,0 +1,32 @@
+PostMark v1.5 : 3/27/01
+pm>pm>pm>pm>Current configuration is:
+The base number of files is 2000
+Transactions: 2000
+Files range between 10 bytes and 97.66 kilobytes in size
+Working directory: /mnt/9/tmp
+Block sizes are: read=512 bytes, write=512 bytes
+Biases are: read/append=5, create/delete=5
+Using Unix buffered file I/O
+Random number generator seed is 42
+Report format is verbose.
+pm>Creating files...Done
+Performing transactions..........Done
+Deleting files...Done
+Time:
+	123 seconds total
+	59 seconds of transactions (33 per second)
+
+Files:
+	3011 created (24 per second)
+		Creation alone: 2000 files (35 per second)
+		Mixed with transactions: 1011 files (17 per second)
+	974 read (16 per second)
+	1026 appended (17 per second)
+	3011 deleted (24 per second)
+		Deletion alone: 2022 files (252 per second)
+		Mixed with transactions: 989 files (16 per second)
+
+Data:
+	50.14 megabytes read (417.43 kilobytes per second)
+	164.96 megabytes written (1.34 megabytes per second)
+pm>
