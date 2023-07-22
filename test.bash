@@ -18,7 +18,6 @@ fi
 
 echo TYPE: ${TYPE} TESTS: ${TESTS}
 
-
 cleanup() {
   if test -f "${QEMULOG}"; then
     echo === QEMU Log ===
@@ -42,7 +41,14 @@ else
   sleep 5
 fi
 
+QEMUPID=`cat ${PIDFILE}`
+QEMUCMDLINE=`ps -o command -www --noheaders $QEMUPID`
+set -- $QEMUCMDLINE
+$1 --version
+echo $QEMUCMDLINE
+
 echo Starting tests ${TIMESTAMP}
+cpu --key /home/v9fs-test/.ssh/identity localhost uname -rm
 rm -f logs/current
 ln -s ${TIMESTAMP} logs/current
 for f in fstabs-${TESTS}/*
@@ -73,4 +79,5 @@ done
 
 cleanup
 echo tests ${TESTS} ${TYPE} ${TIMESTAMP} done
+kill ${QEMUPID}
 exit 0
