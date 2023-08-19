@@ -45,12 +45,12 @@ def write_results_to_csv(results, filename):
             writer.writeheader()
         writer.writerow(results)
 
-if len(sys.argv) != 3:
-    print("Usage: python script.py <input_file> <output_file>")
+if len(sys.argv) != 7:
+    print("Usage: python script.py <info> <version> <threads> <cores> <input_file> <output_file>")
     sys.exit(1)
 
-input_file = sys.argv[1]
-csv_filename = sys.argv[2]
+input_file = sys.argv[5]
+csv_filename = sys.argv[6]
 
 try:
     with open(input_file, 'r') as file:
@@ -60,6 +60,10 @@ except FileNotFoundError:
     sys.exit(1)
 
 parsed_results = parse_dbench_output(dbench_output)
+parsed_results["config"] = sys.argv[1]
+parsed_results["version"] = sys.argv[2]
+parsed_results["threads"] = sys.argv[3]
+parsed_results["cores"] = sys.argv[4]
 print(parsed_results)
 
 write_results_to_csv(parsed_results, csv_filename)
