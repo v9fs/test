@@ -9,6 +9,7 @@ export PIDFILE=/home/v9fs-test/qemu.pid
 export QEMUSTATE=0
 export CHECK=${3:-1}
 export TYPE=${2:-ci}
+export NUMCPU=`nproc`
 
 if [ "$TYPE" = "ci" ]; then
 	export CHECK=${3:-1}
@@ -61,6 +62,7 @@ do
   echo running configuration ${tokens[0]} ${tokens[1]} ....
   for t in tests/${TYPE}/*
   do
+    export FSTAB=$t
     echo -n ...running test `basename $t .bash` ...
     export LOG=logs/${TIMESTAMP}/${tokens[0]}/${tokens[1]}/`basename $t .bash`
     /usr/bin/time -f %e -o $LOG.time cpu --key /home/v9fs-test/.ssh/identity --fstab $f localhost $t 
