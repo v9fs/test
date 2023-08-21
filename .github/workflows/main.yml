@@ -82,6 +82,7 @@ jobs:
         cd /home/v9fs-test/test
         git config --global --add safe.directory /home/v9fs-test/test
         git pull
+        mkdir -p /home/v9fs-test/test/results
         ./test.bash short latency
         echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/test/logs/tag.txt
     - name: Store Logs
