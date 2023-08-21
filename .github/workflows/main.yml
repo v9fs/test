@@ -42,7 +42,7 @@ jobs:
     needs: latency
     runs-on: self-hosted
     container:
-      image: ghcr.io/v9fs/docker:latest
+      image: ghcr.io/v9fs/docker:v0.0.2
       options: -u root
     steps:
     - uses: actions/download-artifact@v3
@@ -68,7 +68,7 @@ jobs:
     needs: build
     runs-on: self-hosted
     container:
-      image: ghcr.io/v9fs/docker:latest
+      image: ghcr.io/v9fs/docker:v0.0.2
       options: -u root
     steps:
     - uses: actions/download-artifact@v3
