@@ -56,7 +56,7 @@ jobs:
         cd /home/v9fs-test/test
         git config --global --add safe.directory /home/v9fs-test/test
         git pull
-        export REF=${{ input.ref }}-${{ input.resultstag }}
+        export REF=${{ inputs.ref }}-${{ inputs.resultstag }}
         ./test.bash short ci
     - name: Store Logs
       uses: actions/upload-artifact@v3
