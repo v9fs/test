@@ -90,5 +90,7 @@ jobs:
         name: test-results
         path: /home/v9fs-test/test/logs
         retention-days: 7
+    - name: Commit results
+      run: git commit -a -m 'Update results in repo' results
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v5
