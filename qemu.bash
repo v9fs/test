@@ -41,9 +41,10 @@ ${QEMU} -kernel \
     -device virtio-net-pci,netdev=n1 \
     -netdev user,id=n1,hostfwd=tcp:127.0.0.1:17010-:17010,net=192.168.1.0/24,host=192.168.1.1 \
     -serial file:${LOG} \
-    -fsdev local,security_model=passthrough,id=fsdev0,path=/ \
+    -fsdev local,security_model=none,id=fsdev0,path=/ \
     -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare \
     -append "${APPEND}" \
     ${EXTRA} \
     -daemonize -display none -pidfile ${PIDFILE}
 
+#    -fsdev local,security_model=passthrough,id=fsdev0,path=/ \

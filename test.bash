@@ -1,6 +1,6 @@
 #!/bin/bash
 export TESTS=${1:-smoke}
-export PATH_MNTDIR=/mnt/9/tmp
+export PATH_MNTDIR=/mnt/9/workspaces/tmp
 export TESTBIN=/home/v9fs-test/diod/tests/kern
 export TIMESTAMP=`date +%s`
 mkdir -p logs/${TIMESTAMP}
@@ -9,6 +9,9 @@ export PIDFILE=/home/v9fs-test/qemu.pid
 export QEMUSTATE=0
 export CHECK=${3:-1}
 export TYPE=${2:-ci}
+
+rm -rf /workspaces/tmp
+mkdir -p /workspaces/tmp
 
 if [ "$TYPE" = "ci" ]; then
 	export CHECK=${3:-1}
@@ -19,11 +22,11 @@ fi
 echo TYPE: ${TYPE} TESTS: ${TESTS}
 
 cleanup() {
-  if test -f "${QEMULOG}"; then
-    echo === QEMU Log ===
-    cat ${QEMULOG}
-    echo === END QEMU Log ===
-  fi
+  #if test -f "${QEMULOG}"; then
+  #  echo === QEMU Log ===
+  #  cat ${QEMULOG}
+  #  echo === END QEMU Log ===
+  #fi
   # only kill qemu if we started it
   if [ $QEMUSTATE -eq 0 ]; then
     if test -f ${PIDFILE}; then
