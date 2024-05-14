@@ -11,7 +11,7 @@ jobs:
       image: ghcr.io/v9fs/docker:latest
       options: -u root
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         repository: 'torvalds/linux'
         ref: 'master'     
@@ -31,7 +31,7 @@ jobs:
       image: ghcr.io/v9fs/docker:latest
       options: -u root
     steps:
-    - uses: actions/download-artifact@v3
+    - uses: actions/download-artifact@v4
       with:
         name: kernel-image
         path: .build/arch/*/boot/*Image
@@ -56,7 +56,7 @@ jobs:
       image: ghcr.io/v9fs/docker:latest
       options: -u root
     steps:
-    - uses: actions/download-artifact@v3
+    - uses: actions/download-artifact@v4
       with:
         name: kernel-image
         path: .build/arch/*/boot/*Image
@@ -70,7 +70,7 @@ jobs:
         ./test.bash short latency
         echo Nightly torvalds/linux master > /home/v9fs-test/test/logs/tag.txt
     - name: Store Logs
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results
         path: /home/v9fs-test/test/logs
