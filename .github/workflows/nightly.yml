@@ -19,7 +19,7 @@ jobs:
       run: mkdir -p .build && make O=.build defconfig
     - name: make
       run: make -j16 O=.build
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: kernel-image
         path: .build/arch/*/boot/*Image
