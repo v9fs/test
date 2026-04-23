@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p /home/v9fs-test/.ssh
+
+# Generate an SSH keypair used by `cpu` to reach the guest.
+if [[ ! -f /home/v9fs-test/.ssh/identity ]]; then
+  ssh-keygen -t ed25519 -N '' -f /home/v9fs-test/.ssh/identity >/dev/null
+fi
+
+# Build initrd if missing (contains dropbear + boot init).
+if [[ ! -f /home/v9fs-test/initrd.cpio ]]; then
+  v9fs-build-initrd
+fi
+
+exec "$@"
+

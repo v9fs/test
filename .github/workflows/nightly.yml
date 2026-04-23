@@ -5,78 +5,47 @@ on:
     - cron: '0 0 * * *'  # Run every day at midnight
   workflow_dispatch:
 jobs:
-  build:
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/v9fs/docker:latest
-      options: -u root
+  nightly:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-      with:
-        repository: 'torvalds/linux'
-        ref: 'master'     
-    - name: configure
-      run: mkdir -p .build && make O=.build defconfig
-    - name: make
-      run: make -j16 O=.build
-    - uses: actions/upload-artifact@v4
-      with:
-        name: kernel-image
-        path: .build/arch/*/boot/*Image
-        retention-days: 1
-  test:
-    needs: latency
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/v9fs/docker:latest
-      options: -u root
-      volumes:
-        - test:/workspaces/tmp
-    steps:
-    - uses: actions/download-artifact@v4
-      with:
-        name: kernel-image
-        path: .build/arch/*/boot/*Image
-    - name: link workspaces to scratch directory
-      run: mkdir -p /workspaces && ln -s `pwd` /workspaces/linux
-    - name: Test sweep
-      run: |
-        cd /home/v9fs-test/test
-        git config --global --add safe.directory /home/v9fs-test/test
-        git pull
-        ./test.bash regress ci
-    - name: Store Logs
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results
-        path: /home/v9fs-test/test/logs
-        retention-days: 7
-  latency:
-    needs: build
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/v9fs/docker:latest
-      options: -u root
-      volumes:
-        - test:/workspaces/tmp
-    steps:
-    - uses: actions/download-artifact@v4
-      with:
-        name: kernel-image
-        path: .build/arch/*/boot/*Image
-    - name: link workspaces to scratch directory
-      run: mkdir -p /workspaces && ln -s `pwd` /workspaces/linux
-    - name: Test sweep
-      run: |
-        cd /home/v9fs-test/test
-        git config --global --add safe.directory /home/v9fs-test/test
-        git pull
-        ./test.bash short latency
-        echo Nightly torvalds/linux master > /home/v9fs-test/test/logs/tag.txt
-    - name: Store Logs
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results
-        path: /home/v9fs-test/test/logs
-        retention-days: 7
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+
+      - name: Checkout kernel under test
+        uses: actions/checkout@v4
+        with:
+          repository: 'v9fs/linux'
+          ref: 'master'
+          path: linux
+
+      - name: Build Docker environment
+        run: docker build -t v9fs-test-env:local .
+
+      - name: Build kernel + run regression tests (QEMU)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp"
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            v9fs-test-env:local \
+            bash -lc "v9fs-build-kernel && v9fs-run-tests regress ci"
+
+      - name: Build kernel + run latency tests (QEMU)
+        run: |
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            v9fs-test-env:local \
+            bash -lc "v9fs-build-kernel && v9fs-run-tests short latency && echo Nightly v9fs/linux master > /home/v9fs-test/test/logs/tag.txt"
+
+      - name: Store Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: logs
+          retention-days: 7
 

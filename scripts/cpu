@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+key=""
+fstab=""
+
+usage() {
+  echo "usage: cpu --key <path> [--fstab <fstab-file>] <host> <command-or-script>" >&2
+  exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --key) key="$2"; shift 2 ;;
+    --fstab) fstab="$2"; shift 2 ;;
+    --help|-h) usage ;;
+    --*) echo "unknown option: $1" >&2; usage ;;
+    *) break ;;
+  esac
+done
+
+[[ $# -ge 2 ]] || usage
+[[ -n "$key" ]] || usage
+
+host="$1"; shift
+cmd="$1"; shift || true
+
+ssh_opts=(
+  -i "$key"
+  -p 17010
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o LogLevel=ERROR
+)
+
+scp_opts=("${ssh_opts[@]}")
+
+if [[ -n "$fstab" ]]; then
+  scp "${scp_opts[@]}" "$fstab" "root@${host}:/etc/fstab" >/dev/null
+  ssh "${ssh_opts[@]}" "root@${host}" "mkdir -p /mnt/9 /mnt/root && mount -a || true" >/dev/null
+fi
+
+# Map host-side LOG (relative to repo) into the guest via 9p.
+repo_on_guest="/mnt/9/home/v9fs-test/test"
+log_host="${LOG:-logs/cpu}"
+log_guest="${repo_on_guest}/${log_host}"
+
+testbin_host="${TESTBIN:-/home/v9fs-test/testbin}"
+testbin_guest="/mnt/9${testbin_host}"
+
+if [[ -f "$cmd" ]]; then
+  tmp="/tmp/cpu-script.bash"
+  scp "${scp_opts[@]}" "$cmd" "root@${host}:${tmp}" >/dev/null
+  ssh "${ssh_opts[@]}" "root@${host}" \
+    "cd '${repo_on_guest}' && PATH_MNTDIR='${PATH_MNTDIR:-/mnt/9/workspaces/tmp}' TESTBIN='${testbin_guest}' LOG='${log_guest}' bash '${tmp}'"
+else
+  ssh "${ssh_opts[@]}" "root@${host}" \
+    "cd '${repo_on_guest}' && PATH_MNTDIR='${PATH_MNTDIR:-/mnt/9/workspaces/tmp}' TESTBIN='${testbin_guest}' LOG='${log_guest}' $cmd $*"
+fi
+

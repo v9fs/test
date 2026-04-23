@@ -26,4 +26,31 @@ This repo intentionally does *not* vendor the kernel source. Most workflows/scri
 2. Build the kernel (or use a provided artifact)
 3. Run the tests in this repository against that kernel
 
-If you tell me how you typically run tests here (CI only vs local/QEMU/VM), I can document the exact command sequence in this section.
+### Local (macOS) via Docker + QEMU
+
+Clone the kernel repo beside this repo:
+
+```bash
+git clone https://github.com/v9fs/linux ../linux
+```
+
+Build the test environment image:
+
+```bash
+docker build -t v9fs-test-env:local .
+```
+
+Build the kernel and run tests under QEMU:
+
+```bash
+mkdir -p ./tmp
+docker run --rm --privileged \
+  -v "$PWD:/home/v9fs-test/test" \
+  -v "$PWD/../linux:/workspaces/linux" \
+  -v "$PWD/tmp:/workspaces/tmp" \
+  -w /home/v9fs-test/test \
+  v9fs-test-env:local \
+  bash -lc "v9fs-build-kernel && v9fs-run-tests short ci"
+```
+
+Logs are written under `logs/`.
