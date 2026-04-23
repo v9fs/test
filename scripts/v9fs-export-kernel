@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Export the kernel image from a build directory into a stable artifact layout.
+#
+# Default layout:
+#   <dst>/.build/arch/<arch>/boot/<Image|bzImage>
+
+src="${1:-/workspaces/linux}"
+build="${2:-${src}/.build}"
+dst="${3:-/workspaces/kernel}"
+
+arch="${ARCH:-$(uname -m)}"
+
+mkdir -p "$dst/.build"
+
+case "$arch" in
+  aarch64)
+    img="${build}/arch/arm64/boot/Image"
+    outdir="$dst/.build/arch/arm64/boot"
+    ;;
+  x86_64)
+    img="${build}/arch/x86_64/boot/bzImage"
+    outdir="$dst/.build/arch/x86_64/boot"
+    ;;
+  *)
+    echo "Unsupported ARCH=$arch (expected aarch64 or x86_64)" >&2
+    exit 2
+    ;;
+esac
+
+if [[ ! -f "$img" ]]; then
+  echo "Kernel image not found at: $img" >&2
+  exit 1
+fi
+
+mkdir -p "$outdir"
+cp -f "$img" "$outdir/"
+
+echo "Exported kernel artifact to: $dst/.build"
+
