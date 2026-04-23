@@ -19,7 +19,7 @@ on:
         type: string
   workflow_call:
 jobs:
-  run:
+  build-kernel:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout test harness
@@ -35,26 +35,87 @@ jobs:
       - name: Build Docker environment
         run: docker build -t v9fs-test-env:local .
 
-      - name: Build kernel + run CI tests (QEMU)
+      - name: Build kernel (QEMU guest kernel image)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp" "$GITHUB_WORKSPACE/kernel"
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            v9fs-test-env:local \
+            bash -lc "v9fs-build-kernel && v9fs-export-kernel /workspaces/linux /workspaces/linux/.build /workspaces/kernel"
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image
+          path: kernel/.build/arch/*/boot/*Image
+          retention-days: 7
+
+  test:
+    needs: build-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-image
+          path: kernel/.build/arch
+
+      - name: Build Docker environment
+        run: docker build -t v9fs-test-env:local .
+
+      - name: Run CI tests (QEMU)
         run: |
           mkdir -p "$GITHUB_WORKSPACE/tmp"
           docker run --rm --privileged \
+            -e KERNELBUILD=/workspaces/kernel/.build \
             -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
-            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc "v9fs-build-kernel && v9fs-run-tests short ci"
+            bash -lc "v9fs-run-tests short ci"
 
-      - name: Build kernel + run latency tests (QEMU)
+      - name: Store Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: logs
+          retention-days: 7
+
+  latency:
+    needs: build-kernel
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-image
+          path: kernel/.build/arch
+
+      - name: Build Docker environment
+        run: docker build -t v9fs-test-env:local .
+
+      - name: Run latency tests (QEMU)
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp"
           docker run --rm --privileged \
+            -e KERNELBUILD=/workspaces/kernel/.build \
             -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
-            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc "v9fs-build-kernel && v9fs-run-tests short latency && echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/test/logs/tag.txt"
+            bash -lc "v9fs-run-tests short latency && echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/test/logs/tag.txt"
 
       - name: Store Logs
         uses: actions/upload-artifact@v4

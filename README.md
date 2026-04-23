@@ -40,17 +40,31 @@ Build the test environment image:
 docker build -t v9fs-test-env:local .
 ```
 
-Build the kernel and run tests under QEMU:
+Build the kernel once (and export it as a reusable artifact):
 
 ```bash
-mkdir -p ./tmp
+mkdir -p ./tmp ./kernel
 docker run --rm --privileged \
   -v "$PWD:/home/v9fs-test/test" \
   -v "$PWD/../linux:/workspaces/linux" \
+  -v "$PWD/kernel:/workspaces/kernel" \
   -v "$PWD/tmp:/workspaces/tmp" \
   -w /home/v9fs-test/test \
   v9fs-test-env:local \
-  bash -lc "v9fs-build-kernel && v9fs-run-tests short ci"
+  bash -lc "v9fs-build-kernel && v9fs-export-kernel /workspaces/linux /workspaces/linux/.build /workspaces/kernel"
+```
+
+Then run tests repeatedly without rebuilding the kernel:
+
+```bash
+docker run --rm --privileged \
+  -e KERNELBUILD=/workspaces/kernel/.build \
+  -v "$PWD:/home/v9fs-test/test" \
+  -v "$PWD/kernel:/workspaces/kernel" \
+  -v "$PWD/tmp:/workspaces/tmp" \
+  -w /home/v9fs-test/test \
+  v9fs-test-env:local \
+  bash -lc "v9fs-run-tests short ci"
 ```
 
 Logs are written under `logs/`.
