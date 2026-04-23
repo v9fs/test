@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+src="${1:-/workspaces/linux}"
+out="${2:-${src}/.build}"
+jobs="${JOBS:-$(nproc)}"
+
+mkdir -p "$out"
+
+if [[ ! -f "${out}/.config" ]]; then
+  make -C "$src" O="$out" defconfig
+fi
+
+make -C "$src" O="$out" -j"$jobs"
+
+echo "Kernel build complete: ${out}"
+

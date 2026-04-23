@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out="${1:-/home/v9fs-test/initrd.cpio}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+mkdir -p \
+  "$work"/{bin,sbin,etc,proc,sys,dev,run,tmp,mnt/9,mnt/root,root,home/v9fs-test/.ssh}
+
+cat >"$work/init" <<'EOF'
+#!/bin/sh
+set -eu
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev || true
+
+mkdir -p /run /tmp
+
+ip link set lo up || true
+ip link set eth0 up || true
+if command -v udhcpc >/dev/null 2>&1; then
+  udhcpc -i eth0 -q -t 5 -n || true
+fi
+
+mkdir -p /mnt/9 /mnt/root /root
+
+# If cpu/scp uploaded an fstab, mount it. (Errors are ok; tests will surface failures.)
+if [ -f /etc/fstab ]; then
+  mkdir -p /mnt/root /mnt/9
+  mount -a || true
+fi
+
+mkdir -p /home/v9fs-test/.ssh
+chmod 700 /home/v9fs-test/.ssh
+
+if [ -f /home/v9fs-test/.ssh/authorized_keys ]; then
+  chmod 600 /home/v9fs-test/.ssh/authorized_keys
+fi
+
+# Start ssh server for the host-side `cpu` helper.
+if command -v dropbear >/dev/null 2>&1; then
+  mkdir -p /etc/dropbear
+  if [ ! -f /etc/dropbear/dropbear_ed25519_host_key ] && command -v dropbearkey >/dev/null 2>&1; then
+    dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1 || true
+  fi
+  dropbear -R -E -p 17010
+fi
+
+echo "initrd up; ssh on :17010"
+exec sh
+EOF
+chmod +x "$work/init"
+
+# Minimal /etc files
+cat >"$work/etc/passwd" <<'EOF'
+root:x:0:0:root:/root:/bin/sh
+EOF
+cat >"$work/etc/group" <<'EOF'
+root:x:0:
+EOF
+
+# Authorized keys for root login (dropbear checks /root/.ssh and /home/<user> too; we use /home/v9fs-test).
+pubkey="$(cat /home/v9fs-test/.ssh/identity.pub)"
+mkdir -p "$work/home/v9fs-test/.ssh"
+printf '%s\n' "$pubkey" >"$work/home/v9fs-test/.ssh/authorized_keys"
+
+# Busybox static provides core utils (sh, mount, udhcpc, etc.)
+cp /bin/busybox "$work/bin/busybox"
+for a in sh mount mkdir ln ls cat echo sleep uname ps kill ip udhcpc; do
+  ln -s /bin/busybox "$work/bin/$a" 2>/dev/null || true
+done
+
+# Dropbear + keygen (dynamic; copy required libs)
+cp /usr/sbin/dropbear "$work/sbin/dropbear"
+cp /usr/bin/dropbearkey "$work/bin/dropbearkey"
+
+copy_libs() {
+  local bin="$1"
+  ldd "$bin" | awk '/=> \//{print $3} /^\//{print $1}' | while read -r lib; do
+    mkdir -p "$work/$(dirname "$lib")"
+    cp -L "$lib" "$work/$lib"
+  done
+}
+copy_libs /usr/sbin/dropbear
+copy_libs /usr/bin/dropbearkey
+
+(cd "$work" && find . -print0 | cpio --null -ov --format=newc) >"$out"
+
+echo "Wrote initrd to $out"
+

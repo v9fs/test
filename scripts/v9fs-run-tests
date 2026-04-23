@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tests="${1:-short}"
+type="${2:-ci}"
+check="${3:-1}"
+
+# Default to the container-provided tools exposed to the guest via 9p.
+export TESTBIN="${TESTBIN:-/home/v9fs-test/testbin}"
+
+exec /home/v9fs-test/test/test.bash "$tests" "$type" "$check"
+

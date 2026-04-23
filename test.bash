@@ -1,7 +1,7 @@
 #!/bin/bash
 export TESTS=${1:-smoke}
 export PATH_MNTDIR=/mnt/9/workspaces/tmp
-export TESTBIN=/home/v9fs-test/diod/tests/kern
+export TESTBIN=${TESTBIN:-/home/v9fs-test/diod/tests/kern}
 export TIMESTAMP=`date +%s`
 mkdir -p logs/${TIMESTAMP}
 export QEMULOG=logs/${TIMESTAMP}/qemu.log
