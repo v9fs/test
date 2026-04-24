@@ -13,7 +13,7 @@ on:
       ref:
         description: 'repository reference'
         required: true
-        default: 'ericvh/for-next'
+        default: 'main'
         type: string
       resultstag:
         description: 'how to tag results'
@@ -26,8 +26,8 @@ jobs:
     env:
       # workflow_dispatch / workflow_call populate `inputs`; push does not — use defaults.
       KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
-      # v9fs/linux default branch is ericvh/devel (there is no master).
-      KERNEL_REF: ${{ inputs.ref || 'ericvh/devel' }}
+      # Pin to main for stable CI (avoid volatile topic branches).
+      KERNEL_REF: ${{ inputs.ref || 'main' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
@@ -102,8 +102,8 @@ jobs:
     env:
       RESULTSTAG: ${{ inputs.resultstag || github.sha }}
       KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
-      # v9fs/linux default branch is ericvh/devel (there is no master).
-      KERNEL_REF: ${{ inputs.ref || 'ericvh/devel' }}
+      # Pin to main for stable CI (avoid volatile topic branches).
+      KERNEL_REF: ${{ inputs.ref || 'main' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
