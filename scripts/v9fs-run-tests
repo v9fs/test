@@ -45,3 +45,17 @@ echo "QEMU run complete; logs at ${QEMULOG}"
 # Make logs readable for artifact upload on the host runner.
 chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 
+# The guest writes a status marker into the shared logs directory.
+# Use it to fail CI while still running the whole suite.
+guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
+if [ -f "${guest_rc_file}" ]; then
+  guest_rc="$(cat "${guest_rc_file}" 2>/dev/null || echo 1)"
+  if [ "${guest_rc}" != "0" ]; then
+    echo "Guest reported failures (rc=${guest_rc})"
+    exit "${guest_rc}"
+  fi
+else
+  echo "WARNING: missing ${guest_rc_file}; treating as failure"
+  exit 2
+fi
+

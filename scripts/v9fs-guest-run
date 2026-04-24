@@ -23,6 +23,8 @@ echo "GUEST: TESTBIN=$TESTBIN"
 mkdir -p "$PATH_MNTDIR"
 rm -rf "$PATH_MNTDIR"/*
 
+rc=0
+
 for f in "$repo"/fstabs-"$tests"/*; do
   ft="$(basename "$f")"
   mode="$(echo "$ft" | awk -F- '{print $1}')"
@@ -57,6 +59,7 @@ for f in "$repo"/fstabs-"$tests"/*; do
       echo "SUCCESS" | tee -a "$results"
     else
       echo "FAIL" | tee -a "$results"
+      rc=1
     fi
   done
 
@@ -64,9 +67,11 @@ for f in "$repo"/fstabs-"$tests"/*; do
     if ! diff -b "$results" "$repo/good/$cfg/results.log" >/dev/null 2>&1; then
       echo "GUEST: Configuration $f FAILED"
       cat "$results"
-      exit 1
+      rc=1
     fi
   fi
 done
 
-echo "GUEST: tests done"
+echo "$rc" >"$repo/logs/$ts/guest.exitcode" 2>/dev/null || true
+echo "GUEST: tests done rc=$rc"
+exit "$rc"
