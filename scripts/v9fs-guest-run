@@ -1,0 +1,72 @@
+#!/bin/sh
+set -eu
+
+tests="${1:-smoke}"
+type="${2:-ci}"
+check="${3:-1}"
+
+repo="/mnt/9/test"
+ts="${TIMESTAMP:-$(date +%s)}"
+
+PATH_MNTDIR="${PATH_MNTDIR:-/mnt/9/tmp}"
+TESTBIN="${TESTBIN:-/mnt/9/testbin}"
+
+mkdir -p "$repo/logs/$ts"
+rm -f "$repo/logs/current"
+ln -s "$ts" "$repo/logs/current"
+
+echo "GUEST: TYPE=$type TESTS=$tests CHECK=$check"
+echo "GUEST: repo=$repo"
+echo "GUEST: PATH_MNTDIR=$PATH_MNTDIR"
+echo "GUEST: TESTBIN=$TESTBIN"
+
+mkdir -p "$PATH_MNTDIR"
+rm -rf "$PATH_MNTDIR"/*
+
+for f in "$repo"/fstabs-"$tests"/*; do
+  ft="$(basename "$f")"
+  mode="$(echo "$ft" | awk -F- '{print $1}')"
+  cfg="$(echo "$ft" | awk -F- '{print $2}')"
+
+  outdir="$repo/logs/$ts/$mode/$cfg"
+  mkdir -p "$outdir"
+
+  echo "GUEST: running configuration $mode $cfg"
+
+  # Ensure mountpoints exist
+  mkdir -p /mnt/9 /mnt/root /dev /sys /proc
+
+  # Apply the provided fstab inside guest
+  cp "$f" /etc/fstab
+  umount /mnt/9 2>/dev/null || true
+  umount /mnt/root 2>/dev/null || true
+  mount -a || true
+
+  results="/tmp/results.log"
+  : >"$results"
+
+  for name in dbench fsx fsx-mmap ldconfig postmark; do
+    t="$repo/tests/$type/$name.bash"
+    [ -f "$t" ] || continue
+    echo -n "...running test $name ..." | tee -a "$results"
+
+    LOG="$outdir/$name"
+    export LOG PATH_MNTDIR TESTBIN
+
+    if /bin/sh "$t" >"$LOG.log" 2>&1; then
+      echo "SUCCESS" | tee -a "$results"
+    else
+      echo "FAIL" | tee -a "$results"
+    fi
+  done
+
+  if [ "$check" = "1" ]; then
+    if ! diff -b "$results" "$repo/good/$cfg/results.log" >/dev/null 2>&1; then
+      echo "GUEST: Configuration $f FAILED"
+      cat "$results"
+      exit 1
+    fi
+  fi
+done
+
+echo "GUEST: tests done"

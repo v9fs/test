@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xfsprogs \
     openssh-client \
     python3 \
+    qemu-system-arm \
     qemu-system-x86 \
     qemu-utils \
     rsync \

@@ -10,8 +10,8 @@ export QEMUSTATE=0
 export CHECK=${3:-1}
 export TYPE=${2:-ci}
 
-rm -rf /workspaces/tmp
 mkdir -p /workspaces/tmp
+rm -rf /workspaces/tmp/*
 
 if [ "$TYPE" = "ci" ]; then
 	export CHECK=${3:-1}
@@ -41,14 +41,29 @@ if test -f ${PIDFILE}; then
 else
   echo Starting qemu
   /home/v9fs-test/test/qemu.bash
-  sleep 5
+  sleep 2
 fi
 
-QEMUPID=`cat ${PIDFILE}`
-QEMUCMDLINE=`ps -o command -www --noheaders $QEMUPID`
-set -- $QEMUCMDLINE
-$1 --version
-echo $QEMUCMDLINE
+if test -f ${PIDFILE}; then
+  QEMUPID=`cat ${PIDFILE}`
+  QEMUCMDLINE=`ps -o command -www --noheaders $QEMUPID || true`
+  set -- $QEMUCMDLINE
+  if [ -n "${1}" ]; then
+    $1 --version || true
+  fi
+  echo $QEMUCMDLINE
+else
+  echo "WARNING: QEMU pidfile not found at ${PIDFILE}"
+fi
+
+echo Waiting for guest SSH...
+for i in $(seq 1 60); do
+  if cpu --key /home/v9fs-test/.ssh/identity localhost uname -rm >/dev/null 2>&1; then
+    echo "Guest SSH is up."
+    break
+  fi
+  sleep 1
+done
 
 echo Starting tests ${TIMESTAMP}
 cpu --key /home/v9fs-test/.ssh/identity localhost uname -rm
@@ -82,5 +97,7 @@ done
 
 cleanup
 echo tests ${TESTS} ${TYPE} ${TIMESTAMP} done
-kill ${QEMUPID}
+if [ -n "${QEMUPID:-}" ]; then
+  kill ${QEMUPID} || true
+fi
 exit 0
