@@ -32,6 +32,7 @@ jobs:
       KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
       # Pin to main for stable CI (avoid volatile topic branches).
       KERNEL_REF: ${{ inputs.ref || 'main' }}
+      GHCR_REPO: ghcr.io/${{ github.repository_owner }}/v9fs-test-kernel
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
@@ -43,10 +44,40 @@ jobs:
           ref: ${{ env.KERNEL_REF }}
           path: linux
 
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Determine kernel source SHA
+        id: kernelsha
+        run: |
+          set -euo pipefail
+          sha="$(git -C linux rev-parse HEAD)"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+          echo "KERNEL_SHA=$sha" >>"$GITHUB_ENV"
+          echo "Kernel SHA: $sha"
+
+      - name: Try fetch cached kernel from GHCR
+        id: kernelcache
+        env:
+          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p dist-cache
+          if oras pull "${GHCR_REPO}:linux-${KERNEL_SHA}" -o dist-cache; then
+            echo "cache_hit=true" >>"$GITHUB_OUTPUT"
+            tar -xzf dist-cache/kernel-image.tar.gz -C .
+            echo "Cache hit for linux-${KERNEL_SHA}"
+          else
+            echo "cache_hit=false" >>"$GITHUB_OUTPUT"
+            echo "Cache miss for linux-${KERNEL_SHA}"
+          fi
+
       - name: Build Docker environment
+        if: steps.kernelcache.outputs.cache_hit != 'true'
         run: docker build -t v9fs-test-env:local .
 
       - name: Build kernel (QEMU guest kernel image)
+        if: steps.kernelcache.outputs.cache_hit != 'true'
         run: |
           mkdir -p "$GITHUB_WORKSPACE/tmp" "$GITHUB_WORKSPACE/kernel"
           docker run --rm --privileged \
@@ -87,9 +118,6 @@ jobs:
           cp -f "$img" Image
           gh release upload "$TAG" Image --clobber
 
-      - name: Install ORAS
-        uses: oras-project/setup-oras@v1
-
       - name: Package kernel image(s) for GHCR
         run: |
           set -euo pipefail
@@ -102,20 +130,20 @@ jobs:
             find kernel -maxdepth 5 -type f | sed 's|^|  |'
             exit 2
           fi
-          tar -czf "dist/kernel-image-${GITHUB_SHA}.tar.gz" "${files[@]}"
+          tar -czf "dist/kernel-image.tar.gz" "${files[@]}"
 
       - name: Publish kernel image package to GHCR (OCI artifact)
         env:
-          GHCR_REPO: ghcr.io/${{ github.repository_owner }}/v9fs-test-kernel
           ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
         run: |
           set -euo pipefail
           echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-          # Publish a content-addressed artifact tagged by commit SHA, plus a ref tag for convenience.
-          oras push "${GHCR_REPO}:${GITHUB_SHA}" \
-            "dist/kernel-image-${GITHUB_SHA}.tar.gz:application/gzip"
-          oras tag "${GHCR_REPO}:${GITHUB_SHA}" "${KERNEL_REF}"
+          # Tag by kernel source SHA so test-only commits can reuse it.
+          oras push "${GHCR_REPO}:linux-${KERNEL_SHA}" \
+            "dist/kernel-image.tar.gz:application/gzip"
+          # Convenience tag for the tracked ref.
+          oras tag "${GHCR_REPO}:linux-${KERNEL_SHA}" "${KERNEL_REF}"
 
   test:
     needs: build-kernel
