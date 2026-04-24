@@ -73,5 +73,6 @@ for f in "$repo"/fstabs-"$tests"/*; do
 done
 
 echo "$rc" >"$repo/logs/$ts/guest.exitcode" 2>/dev/null || true
+sync 2>/dev/null || true
 echo "GUEST: tests done rc=$rc"
 exit "$rc"
