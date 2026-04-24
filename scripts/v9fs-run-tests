@@ -5,6 +5,10 @@ tests="${1:-short}"
 type="${2:-ci}"
 check="${3:-1}"
 
+# Ensure artifacts created by root inside Docker are readable by the
+# GitHub Actions runner user when uploading `logs/` as an artifact.
+umask 022
+
 # Default to the container-provided tools exposed to the guest via 9p.
 export TESTBIN="${TESTBIN:-/home/v9fs-test/testbin}"
 
@@ -37,4 +41,7 @@ if [ -f "${PIDFILE}" ]; then
 fi
 
 echo "QEMU run complete; logs at ${QEMULOG}"
+
+# Make logs readable for artifact upload on the host runner.
+chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 
