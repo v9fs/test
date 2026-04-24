@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 'v9fs/linux'
-          ref: 'ericvh/devel'
+          ref: 'main'
           path: linux
 
       - name: Build Docker environment
@@ -101,7 +101,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc "v9fs-run-tests short latency && echo Nightly v9fs/linux ericvh/devel > /home/v9fs-test/test/logs/tag.txt"
+            bash -lc "v9fs-run-tests short latency && echo Nightly v9fs/linux main > /home/v9fs-test/test/logs/tag.txt"
 
       - name: Store Logs
         uses: actions/upload-artifact@v4
