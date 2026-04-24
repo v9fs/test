@@ -68,6 +68,11 @@ jobs:
             v9fs-test-env:local \
             bash -lc "v9fs-run-tests regress ci"
 
+      - name: Fix log permissions (for artifact upload)
+        if: always()
+        run: |
+          sudo chmod -R a+rX logs || true
+
       - name: Store Logs
         uses: actions/upload-artifact@v4
         with:
@@ -102,6 +107,11 @@ jobs:
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
             bash -lc "v9fs-run-tests short latency && echo Nightly v9fs/linux main > /home/v9fs-test/test/logs/tag.txt"
+
+      - name: Fix log permissions (for artifact upload)
+        if: always()
+        run: |
+          sudo chmod -R a+rX logs || true
 
       - name: Store Logs
         uses: actions/upload-artifact@v4
