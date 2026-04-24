@@ -28,12 +28,24 @@ cmd="$1"; shift || true
 ssh_opts=(
   -i "$key"
   -p 17010
+  -o BatchMode=yes
+  -o ConnectTimeout=2
+  -o ConnectionAttempts=1
   -o StrictHostKeyChecking=no
   -o UserKnownHostsFile=/dev/null
   -o LogLevel=ERROR
 )
 
-scp_opts=("${ssh_opts[@]}")
+scp_opts=(
+  -i "$key"
+  -P 17010
+  -o BatchMode=yes
+  -o ConnectTimeout=2
+  -o ConnectionAttempts=1
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o LogLevel=ERROR
+)
 
 if [[ -n "$fstab" ]]; then
   scp "${scp_opts[@]}" "$fstab" "root@${host}:/etc/fstab" >/dev/null

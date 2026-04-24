@@ -1,1 +1,5 @@
 logs/*
+kernel/
+tmp/
+initrd.cpio
+qemu.pid

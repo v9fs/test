@@ -18,6 +18,7 @@ then
     export KERNEL="${KERNELBUILD}/arch/arm64/boot/Image"
     export MACHINE=virt
     export APPEND="earlycon console=ttyAMA0"
+    export QEMUCPU=${QEMUCPU:-"cortex-a57"}
     export EXTRA=""
 elif [ $ARCH == "x86_64" ]
 then
@@ -25,12 +26,13 @@ then
     export KERNEL="${KERNELBUILD}/arch/x86_64/boot/bzImage"
     export MACHINE=q35
     export APPEND="console=ttyS0"
+    export QEMUCPU=${QEMUCPU:-"max"}
     export EXTRA="-debugcon file:debug.log -global isa-debugcon.iobase=0x402"
 fi
 
 ${QEMU} -kernel \
     ${KERNEL} \
-    -cpu  max \
+    -cpu  ${QEMUCPU} \
     -machine ${MACHINE} \
     -s   \
     -smp 4 \
@@ -39,11 +41,11 @@ ${QEMU} -kernel \
     -object rng-random,filename=/dev/urandom,id=rng0 \
     -device virtio-rng-pci,rng=rng0 \
     -device virtio-net-pci,netdev=n1 \
-    -netdev user,id=n1,hostfwd=tcp:127.0.0.1:17010-:17010,net=192.168.1.0/24,host=192.168.1.1 \
+    -netdev user,id=n1 \
     -serial file:${LOG} \
-    -fsdev local,security_model=none,id=fsdev0,path=/ \
+    -fsdev local,security_model=none,writeout=immediate,id=fsdev0,path=${FSDEV_PATH:-/} \
     -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare \
-    -append "${APPEND}" \
+    -append "${APPEND} ${EXTRA_APPEND:-}" \
     ${EXTRA} \
     -daemonize -display none -pidfile ${PIDFILE}
 

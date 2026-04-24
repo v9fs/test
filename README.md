@@ -57,6 +57,7 @@ docker run --rm --privileged \
 Then run tests repeatedly without rebuilding the kernel:
 
 ```bash
+mkdir -p ./tmp
 docker run --rm --privileged \
   -e KERNELBUILD=/workspaces/kernel/.build \
   -v "$PWD:/home/v9fs-test/test" \
@@ -67,4 +68,27 @@ docker run --rm --privileged \
   bash -lc "v9fs-run-tests short ci"
 ```
 
-Logs are written under `logs/`.
+## How tests run (guest-direct)
+
+`v9fs-run-tests` boots QEMU with an initrd that mounts the host-exported workspace
+over **9p** and then runs the suite **inside the guest** (no SSH/port-forwarding).
+
+The host-visible output is primarily the QEMU serial log:
+
+- `logs/<timestamp>/qemu.log`
+
+The guest mounts the repo at `/mnt/9/test` (see `scripts/v9fs-guest-run`).
+
+## GitHub Actions
+
+CI uses the same Docker + QEMU flow as local development:
+
+1. Build the kernel in a container and upload `kernel-image`
+2. Download that artifact into `kernel/.build/arch/...` for test jobs
+3. Run `v9fs-run-tests ...` with `--privileged` so the harness can bind-mount a
+   stable 9p export root (`/workspaces/share`)
+
+Nightly uploads two log bundles with distinct artifact names:
+
+- `test-results-regression`
+- `test-results-latency`
