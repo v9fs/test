@@ -96,6 +96,24 @@ CI uses the same Docker + QEMU flow as local development:
 | **CI (push and manual)** | `.github/workflows/demand.yml`  | On **every push** (all branches), on **workflow_dispatch** (pick kernel repo/ref in the UI), and when **called** via `workflow_call`. Pushes use `v9fs/linux` @ `**main`** unless you override inputs. Manual default ref is `**main**`. |
 | **Mainline**             | `.github/workflows/nightly.yml` | **Daily** schedule, **workflow_dispatch**, fixed `v9fs/linux` @ `**main`**; full `regress` + latency jobs.                                                                                                                               |
 
+### Kernel images as packages (GHCR)
+
+The kernel image(s) produced by the build step are also published to GitHub
+Packages (GHCR) as an **OCI artifact** (in addition to the intra-workflow
+`kernel-image` Action artifact used by the downstream jobs).
+
+- **Package**: `ghcr.io/v9fs/v9fs-test-kernel`
+- **Tags**:
+  - Commit SHA (e.g. `:<sha>`)
+  - Convenience tag matching the kernel ref (e.g. `:main`)
+
+To fetch the latest `main` build:
+
+```bash
+oras pull ghcr.io/v9fs/v9fs-test-kernel:main -o .
+tar -tzf kernel-image-*.tar.gz | head
+```
+
 
 Log artifact names (avoid collisions when jobs run in parallel):
 

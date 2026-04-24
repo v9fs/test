@@ -8,4 +8,5 @@
 - Ignore common local build outputs (`kernel/`, `tmp/`, generated initrd/pid files) in `.gitignore`.
 - **CI workflow** (`.github/workflows/demand.yml`): run on **every `push`** as well as **manual** `workflow_dispatch`; kernel checkout defaults to **`v9fs/linux` @ `main`** (stable; manual dispatch can still override `ref`).
 - **Fix Actions**: kernel `ref` pinned to **`main`** where defaults apply (push CI and nightly), avoiding volatile branches on `v9fs/linux`.
+- Publish built kernel images to GitHub Packages (GHCR) as an OCI artifact (`ghcr.io/v9fs/v9fs-test-kernel`) tagged by commit SHA and `main`/`nightly`.
 
