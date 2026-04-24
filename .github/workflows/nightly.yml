@@ -1,7 +1,7 @@
 name: Mainline
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 on:
@@ -45,6 +45,25 @@ jobs:
             kernel/.build/arch/*/boot/*Image
             kernel/.build/arch/*/boot/bzImage
           retention-days: 7
+
+      - name: Publish arm64 Image as release asset (kernel-nightly)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: kernel-nightly
+          TITLE: kernel-nightly
+        run: |
+          set -euo pipefail
+          img="kernel/.build/arch/arm64/boot/Image"
+          if [ ! -f "$img" ]; then
+            echo "ERROR: missing $img"
+            find kernel/.build -maxdepth 6 -type f | sed 's|^|  |'
+            exit 2
+          fi
+
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TITLE" --notes "Automated arm64 kernel Image from nightly (${GITHUB_SHA})." --prerelease
+          cp -f "$img" Image
+          gh release upload "$TAG" Image --clobber
 
       - name: Install ORAS
         uses: oras-project/setup-oras@v1

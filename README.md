@@ -114,6 +114,14 @@ oras pull ghcr.io/v9fs/v9fs-test-kernel:main -o .
 tar -tzf kernel-image-*.tar.gz | head
 ```
 
+### Kernel images as direct downloads (GitHub Releases)
+
+CI also uploads the **arm64** kernel `Image` as a stable release asset so you can
+download it with `wget`:
+
+- **CI / main**: `https://github.com/v9fs/test/releases/download/kernel-main/Image`
+- **Nightly**: `https://github.com/v9fs/test/releases/download/kernel-nightly/Image`
+
 
 Log artifact names (avoid collisions when jobs run in parallel):
 
