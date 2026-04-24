@@ -81,46 +81,49 @@ The guest mounts the repo at `/mnt/9/test` (see `scripts/v9fs-guest-run`).
 
 ## GitHub Actions
 
-CI uses the same Docker + QEMU flow as local development:
+CI uses the same Docker + QEMU flow as local development, but **kernel builds are
+published separately** from the harness tests:
 
-1. Build the kernel in a container and upload `kernel-image`
-2. Download that artifact into `kernel/.build/arch/...` for test jobs
-3. Run `v9fs-run-tests ...` with `--privileged` so the harness can bind-mount a
-  stable 9p export root (`/workspaces/share`)
+1. A dedicated workflow builds `v9fs/linux` and publishes the arm64 `Image` to
+   **GitHub Releases** (and GHCR).
+2. The harness workflows download that published `Image` into `kernel/.build/arch/...`
+   and run `v9fs-run-tests ...` with `--privileged` so the harness can bind-mount a
+   stable 9p export root (`/workspaces/share`).
 
 ### Workflows
 
 
-| Workflow                 | File                            | When it runs                                                                                                                                                                                                                             |
-| ------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CI (push and manual)** | `.github/workflows/demand.yml`  | On **every push** (all branches), on **workflow_dispatch** (pick kernel repo/ref in the UI), and when **called** via `workflow_call`. Runs on an **ARM64 runner** (`ubuntu-24.04-arm`) and defaults to `v9fs/linux` @ `**main`** unless you override inputs. |
-| **Mainline**             | `.github/workflows/nightly.yml` | **Daily** schedule, **workflow_dispatch**, fixed `v9fs/linux` @ `**main`**; full `regress` + latency jobs on an **ARM64 runner** (`ubuntu-24.04-arm`).                                                                                                                               |
+| Workflow | File | When it runs |
+| -------- | ---- | ------------ |
+| **Publish Linux kernel** | `.github/workflows/linux-kernel-publish.yml` | **`repository_dispatch`** from `v9fs/linux` (recommended) or **`workflow_dispatch`** here. Builds arm64 `Image`, uploads it to a release tag you choose (`kernel-main`, `kernel-nightly`, `kernel-<version>`, …), and pushes a GHCR bundle tagged by the **linux commit SHA** plus your release tag. |
+| **CI (push and manual)** | `.github/workflows/demand.yml` | On **every push** (all branches), **manual** dispatch, or **`workflow_call`**. Downloads `Image` from the **`kernel-main`** release by default (override via `kernel_release`). |
+| **Mainline** | `.github/workflows/nightly.yml` | **Daily** schedule + **manual** dispatch. Downloads `Image` from **`kernel-nightly`** by default (override via `kernel_release`). |
+
+Because GitHub Actions cannot natively “watch” another repository’s pushes, the
+`v9fs/linux` repo should call `repository_dispatch` on `v9fs/test` when branches change
+(see the header comment in `linux-kernel-publish.yml` for an example payload).
 
 ### Kernel images as packages (GHCR)
 
-The kernel image(s) produced by the build step are also published to GitHub
-Packages (GHCR) as an **OCI artifact** (in addition to the intra-workflow
-`kernel-image` Action artifact used by the downstream jobs).
+Published kernels are also pushed to GitHub Packages (GHCR) as an OCI artifact:
 
 - **Package**: `ghcr.io/v9fs/v9fs-test-kernel`
 - **Tags**:
-  - Commit SHA (e.g. `:<sha>`)
-  - Convenience tag matching the kernel ref (e.g. `:main`)
-
-To fetch the latest `main` build:
+  - `linux-<kernel_commit_sha>` (immutable)
+  - The **release tag** you passed (e.g. `kernel-main`, `kernel-nightly`, `kernel-6.12.0`)
 
 ```bash
-oras pull ghcr.io/v9fs/v9fs-test-kernel:main -o .
-tar -tzf kernel-image-*.tar.gz | head
+oras pull ghcr.io/v9fs/v9fs-test-kernel:linux-<sha> -o .
+tar -tzf kernel-image.tar.gz | head
 ```
 
 ### Kernel images as direct downloads (GitHub Releases)
 
-CI also uploads the **arm64** kernel `Image` as a stable release asset so you can
-download it with `wget`:
+The publish workflow uploads the **arm64** kernel `Image` as a stable release asset:
 
-- **CI / main**: `https://github.com/v9fs/test/releases/download/kernel-main/Image`
-- **Nightly**: `https://github.com/v9fs/test/releases/download/kernel-nightly/Image`
+- **Rolling mainline**: `https://github.com/v9fs/test/releases/download/kernel-main/Image`
+- **Rolling nightly**: `https://github.com/v9fs/test/releases/download/kernel-nightly/Image`
+- **Versioned** (example): `https://github.com/v9fs/test/releases/download/kernel-6.12.0/Image`
 
 
 Log artifact names (avoid collisions when jobs run in parallel):
