@@ -26,7 +26,8 @@ jobs:
     env:
       # workflow_dispatch / workflow_call populate `inputs`; push does not — use defaults.
       KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
-      KERNEL_REF: ${{ inputs.ref || 'master' }}
+      # v9fs/linux default branch is ericvh/devel (there is no master).
+      KERNEL_REF: ${{ inputs.ref || 'ericvh/devel' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
@@ -101,7 +102,8 @@ jobs:
     env:
       RESULTSTAG: ${{ inputs.resultstag || github.sha }}
       KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
-      KERNEL_REF: ${{ inputs.ref || 'master' }}
+      # v9fs/linux default branch is ericvh/devel (there is no master).
+      KERNEL_REF: ${{ inputs.ref || 'ericvh/devel' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
