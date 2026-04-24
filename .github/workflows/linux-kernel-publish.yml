@@ -1,0 +1,153 @@
+# Publish an arm64 `Image` built from v9fs/linux to this repo's GitHub Releases (+ GHCR).
+#
+# This repo cannot subscribe to pushes on another repo. Use one of:
+# - `repository_dispatch` from v9fs/linux (recommended), or
+# - `workflow_dispatch` here for manual / automation.
+#
+# Example repository_dispatch (from v9fs/linux CI or a PAT with repo scope on v9fs/test):
+#   event_type: publish-kernel-image
+#   client_payload:
+#     linux_repository: v9fs/linux
+#     linux_ref: main
+#     release_tag: kernel-main
+#     release_title: kernel-main   # optional
+
+name: Publish Linux kernel (arm64 Image)
+
+on:
+  repository_dispatch:
+    types: [publish-kernel-image]
+  workflow_dispatch:
+    inputs:
+      linux_repository:
+        description: 'Kernel GitHub repository (owner/name)'
+        required: true
+        default: 'v9fs/linux'
+        type: string
+      linux_ref:
+        description: 'Git ref to build (branch, tag, or SHA)'
+        required: true
+        default: 'main'
+        type: string
+      release_tag:
+        description: 'Release tag to publish/update (e.g. kernel-main, kernel-nightly, kernel-6.12.0)'
+        required: true
+        default: 'kernel-main'
+        type: string
+      release_title:
+        description: 'Optional GitHub release title (defaults to release_tag)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04-arm
+    env:
+      GHCR_REPO: ghcr.io/${{ github.repository_owner }}/v9fs-test-kernel
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout test harness (Dockerfile + scripts)
+        uses: actions/checkout@v4
+
+      - name: Resolve parameters
+        id: params
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "repository_dispatch" ]; then
+            python3 -c "import json,os; ev=json.load(open(os.environ['GITHUB_EVENT_PATH'])); p=ev.get('client_payload') or {}; o=open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8'); \
+            o.write('linux_repository=%s\n'%(p.get('linux_repository') or 'v9fs/linux')); \
+            o.write('linux_ref=%s\n'%(p.get('linux_ref') or 'main')); \
+            o.write('release_tag=%s\n'%(p.get('release_tag') or 'kernel-main')); \
+            o.write('release_title=%s\n'%(p.get('release_title') or p.get('release_tag') or 'kernel-main'))"
+          else
+            title="${{ inputs.release_title }}"
+            if [ -z "${title}" ]; then title="${{ inputs.release_tag }}"; fi
+            {
+              echo "linux_repository=${{ inputs.linux_repository }}"
+              echo "linux_ref=${{ inputs.linux_ref }}"
+              echo "release_tag=${{ inputs.release_tag }}"
+              echo "release_title=${title}"
+            } >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout kernel under build
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.params.outputs.linux_repository }}
+          ref: ${{ steps.params.outputs.linux_ref }}
+          path: linux
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Determine kernel source SHA
+        id: kernelsha
+        run: |
+          set -euo pipefail
+          sha="$(git -C linux rev-parse HEAD)"
+          echo "sha=$sha" >>"$GITHUB_OUTPUT"
+          echo "KERNEL_SHA=$sha" >>"$GITHUB_ENV"
+          echo "Kernel SHA: $sha"
+
+      - name: Build Docker environment
+        run: docker build -t v9fs-test-env:local .
+
+      - name: Build kernel (QEMU guest kernel image)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp" "$GITHUB_WORKSPACE/kernel"
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            v9fs-test-env:local \
+            bash -lc "v9fs-build-kernel && v9fs-export-kernel /workspaces/linux /workspaces/linux/.build /workspaces/kernel"
+
+      - name: Publish arm64 Image as release asset
+        env:
+          TAG: ${{ steps.params.outputs.release_tag }}
+          TITLE: ${{ steps.params.outputs.release_title }}
+        run: |
+          set -euo pipefail
+          img="kernel/.build/arch/arm64/boot/Image"
+          if [ ! -f "$img" ]; then
+            echo "ERROR: missing $img"
+            find kernel/.build -maxdepth 6 -type f | sed 's|^|  |'
+            exit 2
+          fi
+
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TITLE" --notes "Automated arm64 kernel Image from ${GITHUB_REPOSITORY}@${GITHUB_SHA} (linux ${KERNEL_SHA})." --prerelease
+          cp -f "$img" Image
+          gh release upload "$TAG" Image --clobber
+
+      - name: Package kernel image(s) for GHCR
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mapfile -t files < <(
+            find kernel/.build/arch -type f \( -name '*Image' -o -name 'bzImage' \) -print | sort
+          )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "ERROR: no kernel images found under kernel/.build/arch"
+            find kernel -maxdepth 5 -type f | sed 's|^|  |'
+            exit 2
+          fi
+          tar -czf "dist/kernel-image.tar.gz" "${files[@]}"
+
+      - name: Publish kernel image package to GHCR (OCI artifact)
+        env:
+          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          oras push "${GHCR_REPO}:linux-${KERNEL_SHA}" \
+            "dist/kernel-image.tar.gz:application/gzip"
+          oras tag "${GHCR_REPO}:linux-${KERNEL_SHA}" "${{ steps.params.outputs.release_tag }}"

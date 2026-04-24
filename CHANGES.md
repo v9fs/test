@@ -6,8 +6,6 @@
 - Stabilize 9p exports for guest tests by bind-mounting the workspace/kernel/tmp/testbins under `/workspaces/share` (`scripts/v9fs-run-tests`).
 - Give nightly/on-demand log artifacts **unique names** so parallel jobs do not collide on `actions/upload-artifact`.
 - Ignore common local build outputs (`kernel/`, `tmp/`, generated initrd/pid files) in `.gitignore`.
-- **CI workflow** (`.github/workflows/demand.yml`): run on **every `push`** as well as **manual** `workflow_dispatch`; kernel checkout defaults to **`v9fs/linux` @ `main`** (stable; manual dispatch can still override `ref`).
-- **Fix Actions**: kernel `ref` pinned to **`main`** where defaults apply (push CI and nightly), avoiding volatile branches on `v9fs/linux`.
-- Publish built kernel images to GitHub Packages (GHCR) as an OCI artifact (`ghcr.io/v9fs/v9fs-test-kernel`) tagged by commit SHA and `main`/`nightly`.
-- Switch CI runners to ARM64 (`ubuntu-24.04-arm`) so kernel builds/tests default to arm64.
+- **Split workflows**: add `.github/workflows/linux-kernel-publish.yml` to build/publish **`v9fs/linux`** arm64 `Image` on **`repository_dispatch`** (from linux) or **`workflow_dispatch`**, publishing to **GitHub Releases** (`kernel-main`, `kernel-nightly`, `kernel-<version>`, …) plus **GHCR** (`linux-<sha>` + release tag).
+- **Harness CI** (`.github/workflows/demand.yml`, `.github/workflows/nightly.yml`) no longer builds the kernel; they **`gh release download`** the published `Image` (defaults: `kernel-main` / `kernel-nightly`) and run QEMU tests on **ARM64** runners.
 

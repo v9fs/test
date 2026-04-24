@@ -1,162 +1,52 @@
 name: CI (push and manual)
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 on:
-  # Run CI on every push (all branches). Narrow with `branches:` if this is too noisy.
+  # Run tests on every push (all branches). Kernel builds are published separately
+  # (see `linux-kernel-publish.yml` + `repository_dispatch` from v9fs/linux).
   push:
   workflow_dispatch:
     inputs:
-      repo:
-        description: 'repository path'
+      kernel_release:
+        description: 'GitHub release tag that provides the arm64 `Image` asset (e.g. kernel-main)'
         required: true
-        default: 'v9fs/linux'
-        type: string
-      ref:
-        description: 'repository reference'
-        required: true
-        default: 'main'
+        default: 'kernel-main'
         type: string
       resultstag:
         description: 'how to tag results'
         default: 'ci'
         type: string
   workflow_call:
+    inputs:
+      kernel_release:
+        description: 'GitHub release tag that provides the arm64 `Image` asset'
+        required: false
+        default: 'kernel-main'
+        type: string
+      resultstag:
+        description: 'Optional tag string written into latency logs'
+        required: false
+        default: ''
+        type: string
+
 jobs:
-  build-kernel:
+  test:
     runs-on: ubuntu-24.04-arm
     env:
-      # workflow_dispatch / workflow_call populate `inputs`; push does not — use defaults.
-      KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
-      # Pin to main for stable CI (avoid volatile topic branches).
-      KERNEL_REF: ${{ inputs.ref || 'main' }}
-      GHCR_REPO: ghcr.io/${{ github.repository_owner }}/v9fs-test-kernel
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
 
-      - name: Checkout kernel under test
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.KERNEL_REPO }}
-          ref: ${{ env.KERNEL_REF }}
-          path: linux
-
-      - name: Install ORAS
-        uses: oras-project/setup-oras@v1
-
-      - name: Determine kernel source SHA
-        id: kernelsha
+      - name: Download published kernel Image
         run: |
           set -euo pipefail
-          sha="$(git -C linux rev-parse HEAD)"
-          echo "sha=$sha" >>"$GITHUB_OUTPUT"
-          echo "KERNEL_SHA=$sha" >>"$GITHUB_ENV"
-          echo "Kernel SHA: $sha"
-
-      - name: Try fetch cached kernel from GHCR
-        id: kernelcache
-        env:
-          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
-        run: |
-          set -euo pipefail
-          mkdir -p dist-cache
-          if oras pull "${GHCR_REPO}:linux-${KERNEL_SHA}" -o dist-cache; then
-            echo "cache_hit=true" >>"$GITHUB_OUTPUT"
-            tar -xzf dist-cache/kernel-image.tar.gz -C .
-            echo "Cache hit for linux-${KERNEL_SHA}"
-          else
-            echo "cache_hit=false" >>"$GITHUB_OUTPUT"
-            echo "Cache miss for linux-${KERNEL_SHA}"
-          fi
-
-      - name: Build Docker environment
-        if: steps.kernelcache.outputs.cache_hit != 'true'
-        run: docker build -t v9fs-test-env:local .
-
-      - name: Build kernel (QEMU guest kernel image)
-        if: steps.kernelcache.outputs.cache_hit != 'true'
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/tmp" "$GITHUB_WORKSPACE/kernel"
-          docker run --rm --privileged \
-            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
-            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
-            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
-            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
-            -w /home/v9fs-test/test \
-            v9fs-test-env:local \
-            bash -lc "v9fs-build-kernel && v9fs-export-kernel /workspaces/linux /workspaces/linux/.build /workspaces/kernel"
-
-      - name: Upload kernel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-image
-          path: |
-            kernel/.build/arch/*/boot/*Image
-            kernel/.build/arch/*/boot/bzImage
-          retention-days: 7
-
-      - name: Publish arm64 Image as release asset (kernel-main)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: kernel-main
-          TITLE: kernel-main
-        run: |
-          set -euo pipefail
-          img="kernel/.build/arch/arm64/boot/Image"
-          if [ ! -f "$img" ]; then
-            echo "ERROR: missing $img"
-            find kernel/.build -maxdepth 6 -type f | sed 's|^|  |'
-            exit 2
-          fi
-
-          # Create (or ensure) a stable tag-based release and replace the asset.
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "$TITLE" --notes "Automated arm64 kernel Image from CI (${GITHUB_SHA})." --prerelease
-          cp -f "$img" Image
-          gh release upload "$TAG" Image --clobber
-
-      - name: Package kernel image(s) for GHCR
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          mapfile -t files < <(
-            find kernel/.build/arch -type f \( -name '*Image' -o -name 'bzImage' \) -print | sort
-          )
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "ERROR: no kernel images found under kernel/.build/arch"
-            find kernel -maxdepth 5 -type f | sed 's|^|  |'
-            exit 2
-          fi
-          tar -czf "dist/kernel-image.tar.gz" "${files[@]}"
-
-      - name: Publish kernel image package to GHCR (OCI artifact)
-        env:
-          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-          # Tag by kernel source SHA so test-only commits can reuse it.
-          oras push "${GHCR_REPO}:linux-${KERNEL_SHA}" \
-            "dist/kernel-image.tar.gz:application/gzip"
-          # Convenience tag for the tracked ref.
-          oras tag "${GHCR_REPO}:linux-${KERNEL_SHA}" "${KERNEL_REF}"
-
-  test:
-    needs: build-kernel
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - name: Checkout test harness
-        uses: actions/checkout@v4
-
-      - name: Download kernel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-image
-          path: kernel/.build/arch
+          mkdir -p kernel/.build/arch/arm64/boot
+          gh release download "${KERNEL_RELEASE}" -p Image -D kernel/.build/arch/arm64/boot --clobber
+          ls -la kernel/.build/arch/arm64/boot/Image
 
       - name: Build Docker environment
         run: docker build -t v9fs-test-env:local .
@@ -209,22 +99,21 @@ jobs:
           retention-days: 7
 
   latency:
-    needs: build-kernel
     runs-on: ubuntu-24.04-arm
     env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
       RESULTSTAG: ${{ inputs.resultstag || github.sha }}
-      KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
-      # Pin to main for stable CI (avoid volatile topic branches).
-      KERNEL_REF: ${{ inputs.ref || 'main' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
 
-      - name: Download kernel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-image
-          path: kernel/.build/arch
+      - name: Download published kernel Image
+        run: |
+          set -euo pipefail
+          mkdir -p kernel/.build/arch/arm64/boot
+          gh release download "${KERNEL_RELEASE}" -p Image -D kernel/.build/arch/arm64/boot --clobber
+          ls -la kernel/.build/arch/arm64/boot/Image
 
       - name: Build Docker environment
         run: docker build -t v9fs-test-env:local .
@@ -239,7 +128,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc "v9fs-run-tests short latency && echo \"$RESULTSTAG $KERNEL_REPO $KERNEL_REF\" > /home/v9fs-test/test/logs/tag.txt"
+            bash -lc "v9fs-run-tests short latency && echo \"$RESULTSTAG ${KERNEL_RELEASE} v9fs/linux\" > /home/v9fs-test/test/logs/tag.txt"
 
       - name: Dump logs on failure
         if: failure()
@@ -275,4 +164,3 @@ jobs:
           name: test-results-latency
           path: logs
           retention-days: 7
-

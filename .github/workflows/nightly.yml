@@ -1,140 +1,35 @@
 name: Mainline
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 on:
   schedule:
     - cron: '0 0 * * *'  # Run every day at midnight
   workflow_dispatch:
+    inputs:
+      kernel_release:
+        description: 'GitHub release tag that provides the arm64 `Image` asset (default: kernel-nightly)'
+        required: true
+        default: 'kernel-nightly'
+        type: string
+
 jobs:
-  build-kernel:
+  test:
     runs-on: ubuntu-24.04-arm
     env:
-      GHCR_REPO: ghcr.io/${{ github.repository_owner }}/v9fs-test-kernel
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-nightly' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
 
-      - name: Checkout kernel under test
-        uses: actions/checkout@v4
-        with:
-          repository: 'v9fs/linux'
-          ref: 'main'
-          path: linux
-
-      - name: Install ORAS
-        uses: oras-project/setup-oras@v1
-
-      - name: Determine kernel source SHA
-        id: kernelsha
+      - name: Download published kernel Image
         run: |
           set -euo pipefail
-          sha="$(git -C linux rev-parse HEAD)"
-          echo "sha=$sha" >>"$GITHUB_OUTPUT"
-          echo "KERNEL_SHA=$sha" >>"$GITHUB_ENV"
-          echo "Kernel SHA: $sha"
-
-      - name: Try fetch cached kernel from GHCR
-        id: kernelcache
-        env:
-          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
-        run: |
-          set -euo pipefail
-          mkdir -p dist-cache
-          if oras pull "${GHCR_REPO}:linux-${KERNEL_SHA}" -o dist-cache; then
-            echo "cache_hit=true" >>"$GITHUB_OUTPUT"
-            tar -xzf dist-cache/kernel-image.tar.gz -C .
-            echo "Cache hit for linux-${KERNEL_SHA}"
-          else
-            echo "cache_hit=false" >>"$GITHUB_OUTPUT"
-            echo "Cache miss for linux-${KERNEL_SHA}"
-          fi
-
-      - name: Build Docker environment
-        if: steps.kernelcache.outputs.cache_hit != 'true'
-        run: docker build -t v9fs-test-env:local .
-
-      - name: Build kernel (QEMU guest kernel image)
-        if: steps.kernelcache.outputs.cache_hit != 'true'
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/tmp" "$GITHUB_WORKSPACE/kernel"
-          docker run --rm --privileged \
-            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
-            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
-            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
-            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
-            -w /home/v9fs-test/test \
-            v9fs-test-env:local \
-            bash -lc "v9fs-build-kernel && v9fs-export-kernel /workspaces/linux /workspaces/linux/.build /workspaces/kernel"
-
-      - name: Upload kernel artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-image
-          path: |
-            kernel/.build/arch/*/boot/*Image
-            kernel/.build/arch/*/boot/bzImage
-          retention-days: 7
-
-      - name: Publish arm64 Image as release asset (kernel-nightly)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: kernel-nightly
-          TITLE: kernel-nightly
-        run: |
-          set -euo pipefail
-          img="kernel/.build/arch/arm64/boot/Image"
-          if [ ! -f "$img" ]; then
-            echo "ERROR: missing $img"
-            find kernel/.build -maxdepth 6 -type f | sed 's|^|  |'
-            exit 2
-          fi
-
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "$TITLE" --notes "Automated arm64 kernel Image from nightly (${GITHUB_SHA})." --prerelease
-          cp -f "$img" Image
-          gh release upload "$TAG" Image --clobber
-
-      - name: Package kernel image(s) for GHCR
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          mapfile -t files < <(
-            find kernel/.build/arch -type f \( -name '*Image' -o -name 'bzImage' \) -print | sort
-          )
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "ERROR: no kernel images found under kernel/.build/arch"
-            find kernel -maxdepth 5 -type f | sed 's|^|  |'
-            exit 2
-          fi
-          tar -czf "dist/kernel-image.tar.gz" "${files[@]}"
-
-      - name: Publish kernel image package to GHCR (OCI artifact)
-        env:
-          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
-        run: |
-          set -euo pipefail
-          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-          oras push "${GHCR_REPO}:linux-${KERNEL_SHA}" \
-            "dist/kernel-image.tar.gz:application/gzip"
-          oras tag "${GHCR_REPO}:linux-${KERNEL_SHA}" "nightly"
-          oras tag "${GHCR_REPO}:linux-${KERNEL_SHA}" "main"
-
-  test:
-    needs: build-kernel
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - name: Checkout test harness
-        uses: actions/checkout@v4
-
-      - name: Download kernel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-image
-          path: kernel/.build/arch
+          mkdir -p kernel/.build/arch/arm64/boot
+          gh release download "${KERNEL_RELEASE}" -p Image -D kernel/.build/arch/arm64/boot --clobber
+          ls -la kernel/.build/arch/arm64/boot/Image
 
       - name: Build Docker environment
         run: docker build -t v9fs-test-env:local .
@@ -187,17 +82,20 @@ jobs:
           retention-days: 7
 
   latency:
-    needs: build-kernel
     runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-nightly' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
 
-      - name: Download kernel artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: kernel-image
-          path: kernel/.build/arch
+      - name: Download published kernel Image
+        run: |
+          set -euo pipefail
+          mkdir -p kernel/.build/arch/arm64/boot
+          gh release download "${KERNEL_RELEASE}" -p Image -D kernel/.build/arch/arm64/boot --clobber
+          ls -la kernel/.build/arch/arm64/boot/Image
 
       - name: Build Docker environment
         run: docker build -t v9fs-test-env:local .
@@ -212,7 +110,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc "v9fs-run-tests short latency && echo Nightly v9fs/linux main > /home/v9fs-test/test/logs/tag.txt"
+            bash -lc "v9fs-run-tests short latency && echo \"Nightly ${KERNEL_RELEASE} v9fs/linux\" > /home/v9fs-test/test/logs/tag.txt"
 
       - name: Dump logs on failure
         if: failure()
@@ -248,4 +146,3 @@ jobs:
           name: test-results-latency
           path: logs
           retention-days: 7
-
