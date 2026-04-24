@@ -145,6 +145,28 @@ jobs:
             v9fs-test-env:local \
             bash -lc "v9fs-run-tests short ci"
 
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "==== logs tree ===="
+          (ls -R logs || true)
+          echo "==== qemu.log (tail) ===="
+          for f in logs/*/qemu.log; do
+            echo "---- $f ----"
+            tail -n 250 "$f" || true
+          done
+          echo "==== per-test logs (tail) ===="
+          for f in logs/*/*/*/*.log; do
+            echo "---- $f ----"
+            tail -n 80 "$f" || true
+          done
+          echo "==== guest exitcode markers ===="
+          for f in logs/*/guest.exitcode; do
+            echo "---- $f ----"
+            cat "$f" || true
+          done
+
       - name: Fix log permissions (for artifact upload)
         if: always()
         run: |
@@ -190,6 +212,28 @@ jobs:
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
             bash -lc "v9fs-run-tests short latency && echo \"$RESULTSTAG $KERNEL_REPO $KERNEL_REF\" > /home/v9fs-test/test/logs/tag.txt"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "==== logs tree ===="
+          (ls -R logs || true)
+          echo "==== qemu.log (tail) ===="
+          for f in logs/*/qemu.log; do
+            echo "---- $f ----"
+            tail -n 250 "$f" || true
+          done
+          echo "==== per-test logs (tail) ===="
+          for f in logs/*/*/*/*.log; do
+            echo "---- $f ----"
+            tail -n 80 "$f" || true
+          done
+          echo "==== guest exitcode markers ===="
+          for f in logs/*/guest.exitcode; do
+            echo "---- $f ----"
+            cat "$f" || true
+          done
 
       - name: Fix log permissions (for artifact upload)
         if: always()
