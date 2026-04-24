@@ -1,5 +1,9 @@
 name: CI (push and manual)
 
+permissions:
+  contents: read
+  packages: write
+
 on:
   # Run CI on every push (all branches). Narrow with `branches:` if this is too noisy.
   push:
@@ -60,6 +64,28 @@ jobs:
           name: kernel-image
           path: kernel/.build/arch/*/boot/*Image
           retention-days: 7
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Package kernel image(s) for GHCR
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -C kernel -czf "dist/kernel-image-${GITHUB_SHA}.tar.gz" .build/arch/*/boot/*Image
+
+      - name: Publish kernel image package to GHCR (OCI artifact)
+        env:
+          GHCR_REPO: ghcr.io/${{ github.repository_owner }}/v9fs-test-kernel
+          ORAS_EXPERIMENTAL_OCI_ARTIFACT: "1"
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          # Publish a content-addressed artifact tagged by commit SHA, plus a ref tag for convenience.
+          oras push "${GHCR_REPO}:${GITHUB_SHA}" \
+            "dist/kernel-image-${GITHUB_SHA}.tar.gz:application/gzip"
+          oras tag "${GHCR_REPO}:${GITHUB_SHA}" "${KERNEL_REF}"
 
   test:
     needs: build-kernel
