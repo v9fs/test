@@ -86,9 +86,17 @@ CI uses the same Docker + QEMU flow as local development:
 1. Build the kernel in a container and upload `kernel-image`
 2. Download that artifact into `kernel/.build/arch/...` for test jobs
 3. Run `v9fs-run-tests ...` with `--privileged` so the harness can bind-mount a
-   stable 9p export root (`/workspaces/share`)
+  stable 9p export root (`/workspaces/share`)
 
-Nightly uploads two log bundles with distinct artifact names:
+### Workflows
 
-- `test-results-regression`
-- `test-results-latency`
+| Workflow | File | When it runs |
+|----------|------|----------------|
+| **CI (push and manual)** | `.github/workflows/demand.yml` | On **every push** (all branches), on **workflow_dispatch** (pick kernel repo/ref in the UI), and when **called** via `workflow_call`. Pushes use `v9fs/linux` @ `master` unless you run manually with other inputs. |
+| **Mainline** | `.github/workflows/nightly.yml` | **Daily** schedule, **workflow_dispatch**, fixed `v9fs/linux` @ `master`; full `regress` + latency jobs. |
+
+Log artifact names (avoid collisions when jobs run in parallel):
+
+- CI manual/push: `test-results-ci`, `test-results-latency`
+- Nightly: `test-results-regression`, `test-results-latency`
+
