@@ -77,6 +77,7 @@ case "$cmdline" in
       ls -la /mnt/9/test/scripts 2>/dev/null || true
       ls -la /mnt/9/test 2>/dev/null || true
     fi
+    sync 2>/dev/null || true
     echo "initrd: powering off"
     poweroff -f || halt -f || reboot -f
     ;;
