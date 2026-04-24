@@ -1,6 +1,8 @@
-name: On Demand Regression
+name: CI (push and manual)
 
 on:
+  # Run CI on every push (all branches). Narrow with `branches:` if this is too noisy.
+  push:
   workflow_dispatch:
     inputs:
       repo:
@@ -21,6 +23,10 @@ on:
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
+    env:
+      # workflow_dispatch / workflow_call populate `inputs`; push does not — use defaults.
+      KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
+      KERNEL_REF: ${{ inputs.ref || 'master' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
@@ -28,8 +34,8 @@ jobs:
       - name: Checkout kernel under test
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.repo }}
-          ref: ${{ inputs.ref }}
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_REF }}
           path: linux
 
       - name: Build Docker environment
@@ -92,6 +98,10 @@ jobs:
   latency:
     needs: build-kernel
     runs-on: ubuntu-latest
+    env:
+      RESULTSTAG: ${{ inputs.resultstag || github.sha }}
+      KERNEL_REPO: ${{ inputs.repo || 'v9fs/linux' }}
+      KERNEL_REF: ${{ inputs.ref || 'master' }}
     steps:
       - name: Checkout test harness
         uses: actions/checkout@v4
@@ -115,7 +125,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc "v9fs-run-tests short latency && echo ${{ inputs.resultstag }} ${{ inputs.repo }} ${{ inputs.ref }} > /home/v9fs-test/test/logs/tag.txt"
+            bash -lc "v9fs-run-tests short latency && echo \"$RESULTSTAG $KERNEL_REPO $KERNEL_REF\" > /home/v9fs-test/test/logs/tag.txt"
 
       - name: Store Logs
         uses: actions/upload-artifact@v4
