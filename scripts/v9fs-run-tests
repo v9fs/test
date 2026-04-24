@@ -28,7 +28,7 @@ mountpoint -q /workspaces/share/testbin || mount --bind /home/v9fs-test/testbin 
 export FSDEV_PATH="/workspaces/share"
 
 # Run the suite inside the guest and poweroff when complete.
-export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.type=${type} v9fs.check=${check}"
+export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.type=${type} v9fs.check=${check} v9fs.ts=${TIMESTAMP}"
 
 /home/v9fs-test/test/qemu.bash
 
