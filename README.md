@@ -93,8 +93,8 @@ CI uses the same Docker + QEMU flow as local development:
 
 | Workflow                 | File                            | When it runs                                                                                                                                                                                                                             |
 | ------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CI (push and manual)** | `.github/workflows/demand.yml`  | On **every push** (all branches), on **workflow_dispatch** (pick kernel repo/ref in the UI), and when **called** via `workflow_call`. Pushes use `v9fs/linux` @ `**main`** unless you override inputs. Manual default ref is `**main**`. |
-| **Mainline**             | `.github/workflows/nightly.yml` | **Daily** schedule, **workflow_dispatch**, fixed `v9fs/linux` @ `**main`**; full `regress` + latency jobs.                                                                                                                               |
+| **CI (push and manual)** | `.github/workflows/demand.yml`  | On **every push** (all branches), on **workflow_dispatch** (pick kernel repo/ref in the UI), and when **called** via `workflow_call`. Runs on an **ARM64 runner** (`ubuntu-24.04-arm`) and defaults to `v9fs/linux` @ `**main`** unless you override inputs. |
+| **Mainline**             | `.github/workflows/nightly.yml` | **Daily** schedule, **workflow_dispatch**, fixed `v9fs/linux` @ `**main`**; full `regress` + latency jobs on an **ARM64 runner** (`ubuntu-24.04-arm`).                                                                                                                               |
 
 ### Kernel images as packages (GHCR)
 
