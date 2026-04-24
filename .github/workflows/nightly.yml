@@ -41,7 +41,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-image
-          path: kernel/.build/arch/*/boot/*Image
+          path: |
+            kernel/.build/arch/*/boot/*Image
+            kernel/.build/arch/*/boot/bzImage
           retention-days: 7
 
       - name: Install ORAS
@@ -51,7 +53,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          tar -C kernel -czf "dist/kernel-image-${GITHUB_SHA}.tar.gz" .build/arch/*/boot/*Image
+          mapfile -t files < <(
+            find kernel/.build/arch -type f \( -name '*Image' -o -name 'bzImage' \) -print | sort
+          )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "ERROR: no kernel images found under kernel/.build/arch"
+            find kernel -maxdepth 5 -type f | sed 's|^|  |'
+            exit 2
+          fi
+          tar -czf "dist/kernel-image-${GITHUB_SHA}.tar.gz" "${files[@]}"
 
       - name: Publish kernel image package to GHCR (OCI artifact)
         env:
