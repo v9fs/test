@@ -133,6 +133,18 @@ if [ -f /lib/ld-linux-aarch64.so.1 ]; then
   mkdir -p "$work/lib"
   cp -L /lib/ld-linux-aarch64.so.1 "$work/lib/ld-linux-aarch64.so.1"
 fi
+if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
+  mkdir -p "$work/lib64"
+  cp -L /lib64/ld-linux-x86-64.so.2 "$work/lib64/ld-linux-x86-64.so.2"
+fi
+
+# Bench/test helpers are executed inside the initrd (from 9p), so the initrd
+# must include their shared library dependencies.
+for b in /usr/bin/dbench /usr/bin/postmark /usr/local/bin/fsx; do
+  if [ -x "$b" ]; then
+    copy_libs "$b"
+  fi
+done
 
 (cd "$work" && find . -print0 | cpio --null -ov --format=newc) >"$out"
 

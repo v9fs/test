@@ -48,10 +48,10 @@ RUN useradd -m -s /bin/bash v9fs-test \
 # Provide a shared testbin layout compatible with existing scripts.
 # These paths are reachable from the guest via 9p (mounted at /mnt/9).
 RUN mkdir -p /home/v9fs-test/testbin/dbench /home/v9fs-test/testbin/postmark /home/v9fs-test/testbin/fsx \
-  && ln -sf /usr/bin/dbench /home/v9fs-test/testbin/dbench/dbench \
-  && (test -f /usr/share/dbench/client.txt && ln -sf /usr/share/dbench/client.txt /home/v9fs-test/testbin/dbench/client.txt || true) \
-  && ln -sf /usr/bin/postmark /home/v9fs-test/testbin/postmark/postmark \
-  && ln -sf /usr/local/bin/fsx /home/v9fs-test/testbin/fsx/fsx \
+  && cp -f /usr/bin/dbench /home/v9fs-test/testbin/dbench/dbench \
+  && cp -f /usr/share/dbench/client.txt /home/v9fs-test/testbin/dbench/client.txt \
+  && cp -f /usr/bin/postmark /home/v9fs-test/testbin/postmark/postmark \
+  && cp -f /usr/local/bin/fsx /home/v9fs-test/testbin/fsx/fsx \
   && chown -R v9fs-test:v9fs-test /home/v9fs-test/testbin
 
 COPY scripts/ /usr/local/bin/
