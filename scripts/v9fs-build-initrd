@@ -61,9 +61,13 @@ case "$cmdline" in
     tests="$(echo "$cmdline" | sed -n 's/.*v9fs.tests=\([^ ]*\).*/\1/p')"
     type="$(echo "$cmdline" | sed -n 's/.*v9fs.type=\([^ ]*\).*/\1/p')"
     check="$(echo "$cmdline" | sed -n 's/.*v9fs.check=\([^ ]*\).*/\1/p')"
+    ts="$(echo "$cmdline" | sed -n 's/.*v9fs.ts=\([^ ]*\).*/\1/p')"
     : "${tests:=smoke}"
     : "${type:=ci}"
     : "${check:=1}"
+    if [ -n "${ts:-}" ]; then
+      export TIMESTAMP="$ts"
+    fi
 
     echo "initrd: running guest tests tests=$tests type=$type check=$check"
     if [ -f /mnt/9/test/scripts/v9fs-guest-run ]; then
