@@ -60,6 +60,7 @@ EOF
 chmod +x "$init"
 
 # Overlay our /init onto the base initrd, without building any new Go commands.
-"$u_root" -base "$base" -nocmd -o "$out" -initcmd="/init" -files "$init"
+# Also keep /bin/sh from the base archive as the default shell.
+"$u_root" -base "$base" -nocmd -defaultsh="/bin/sh" -o "$out" -initcmd="/init" -files "$init"
 echo "Wrote initrd to $out"
 
