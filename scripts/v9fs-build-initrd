@@ -19,8 +19,8 @@ set -eu
 
 mkdir -p /run /tmp /mnt/9
 
-# `v9fs/docker` initrd is u-root based. With `/init` pointing at `bbin/init`,
-# this script is invoked as u-root's uinit (see `uroot.uinitcmd=/uinit`).
+# `v9fs/docker` initrd is u-root based. We install this script as `/bin/uinit`,
+# which u-root init executes automatically.
 if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
   echo "uinit: ERROR: failed to mount hostshare on /mnt/9"
 fi
@@ -191,8 +191,8 @@ def main():
                 # Replace base init symlink (cpud) with u-root init.
                 write_symlink(wf, "init", "bbin/init")
                 replaced = True
-            elif name in ("uinit", "/uinit"):
-                write_entry(wf, "uinit", uinit_mode, 0, 0, init_data)
+            elif name in ("bin/uinit", "/bin/uinit"):
+                write_entry(wf, "bin/uinit", uinit_mode, 0, 0, init_data)
                 uinit_written = True
             else:
                 write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
@@ -202,7 +202,7 @@ def main():
             write_symlink(wf, "init", "bbin/init")
 
         if not uinit_written:
-            write_entry(wf, "uinit", uinit_mode, 0, 0, init_data)
+            write_entry(wf, "bin/uinit", uinit_mode, 0, 0, init_data)
 
         # trailer
         write_entry(wf, "TRAILER!!!", stat.S_IFREG | 0o644, 0, 0, b"")

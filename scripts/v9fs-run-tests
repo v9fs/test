@@ -25,7 +25,7 @@ export INITRD="/home/v9fs-test/initrd.patched.cpio"
 
 # Ask initrd to run guest tests, and propagate timestamp so the guest writes
 # guest.exitcode into the same logs/<ts>/ directory the host checks.
-export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.ts=${TIMESTAMP} uroot.uinitcmd=/uinit"
+export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.ts=${TIMESTAMP}"
 
 /home/v9fs-test/test/qemu.bash
 
