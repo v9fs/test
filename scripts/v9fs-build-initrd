@@ -239,25 +239,27 @@ def main():
                 extras[rel] = (stat.S_IFREG | (st.st_mode & 0o777), open(src, "rb").read())
 
     replaced_init = False
+    replace_names = set(extras.keys())
+    replace_names.add("init")
+
     tmp_out = out_path + ".tmp"
     with open(base_path, "rb") as rf, open(tmp_out, "wb") as wf:
         for ent in iter_newc_entries(rf):
             name = ent["name"]
             if name == "TRAILER!!!":
                 break
-            if name in ("init", "/init"):
-                write_entry(wf, "init", init_mode, 0, 0, init_data)
-                replaced_init = True
-            else:
-                write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
+            # If we are replacing this path, skip the base entry so we don't
+            # rely on the kernel's behavior for duplicate cpio entries.
+            norm = name.lstrip("/")
+            if norm in replace_names:
+                continue
+            write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
 
         if not replaced_init:
             write_entry(wf, "init", init_mode, 0, 0, init_data)
 
         # Add extra binaries/libs (and overwrite if absent in base).
         for path, (mode, data) in extras.items():
-            # avoid double-writing files already present in base by only adding
-            # ones that are not in a minimal safe set; base initrd is tiny anyway.
             write_entry(wf, path, mode, 0, 0, data)
 
         # trailer
