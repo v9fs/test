@@ -2,49 +2,65 @@
 set -euo pipefail
 
 tests="${1:-smoke}"
-export TIMESTAMP="${TIMESTAMP:-$(date +%s)}"
+type="${2:-ci}"
+check="${3:-1}"
 
+# Ensure artifacts created by root inside Docker are readable by the
+# GitHub Actions runner user when uploading `logs/` as an artifact.
+umask 022
+
+cpu_bin="${CPU_BIN:-/home/v9fs-test/go/bin/cpu}"
+cpu_key="${CPU_KEY:-/home/v9fs-test/.ssh/identity}"
+
+export TIMESTAMP="${TIMESTAMP:-$(date +%s)}"
 mkdir -p "logs/${TIMESTAMP}"
 export QEMULOG="logs/${TIMESTAMP}/qemu.log"
 export PIDFILE="/home/v9fs-test/qemu.pid"
 
-# Make a stable export root for 9p and ensure we have a temp directory to export.
+# Stable export root so 9p sees our bind mounts.
 mkdir -p /workspaces/share
-mkdir -p /workspaces/share/test /workspaces/share/tmpdir /workspaces/share/kernel /workspaces/share/tmp
-
+mkdir -p /workspaces/share/test /workspaces/share/tmp /workspaces/share/kernel /workspaces/share/tmpdir
 mountpoint -q /workspaces/share/test || mount --bind /home/v9fs-test/test /workspaces/share/test
-mountpoint -q /workspaces/share/kernel || mount --bind /workspaces/kernel /workspaces/share/kernel
 mountpoint -q /workspaces/share/tmp || mount --bind /workspaces/tmp /workspaces/share/tmp
+mountpoint -q /workspaces/share/kernel || mount --bind /workspaces/kernel /workspaces/share/kernel
 
 export FSDEV_PATH="/workspaces/share"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
-# Build initrd each run (cheap; keeps guest runner in sync).
-export INITRD="/home/v9fs-test/initrd.patched.cpio"
-./scripts/v9fs-build-initrd "${INITRD}"
+# Use the image-provided u-root/cpu initrd (starts cpud as PID 1).
+export INITRD="${INITRD:-/home/v9fs-test/initrd.cpio}"
 
-# Ask initrd to run guest tests, and propagate timestamp so the guest writes
-# guest.exitcode into the same logs/<ts>/ directory the host checks.
-export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.ts=${TIMESTAMP}"
+# Keep kernel cmdline for debugging, but don't rely on it for test execution.
+export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
 
 /home/v9fs-test/test/qemu.bash
 
-# Wait for QEMU to exit (guest powers off).
+echo "Waiting for guest cpud..."
+for _ in $(seq 1 60); do
+  if "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 uname -rm >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+echo "Running guest tests via cpu (tests=${tests} type=${type} check=${check})"
+export LOG="logs/${TIMESTAMP}"
+"${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 \
+  /mnt/9/workspaces/share/test/scripts/v9fs-guest-run "${tests}" "${type}" "${check}" || true
+
+# Wait for QEMU to exit (guest may still be running; kill if needed).
 if [ -f "${PIDFILE}" ]; then
   pid="$(cat "${PIDFILE}")"
-  while kill -0 "${pid}" 2>/dev/null; do
+  for _ in $(seq 1 10); do
+    kill -0 "${pid}" 2>/dev/null || break
     sleep 1
   done
+  kill "${pid}" 2>/dev/null || true
 fi
 
 chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 
 guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
-for _ in 1 2 3 4 5; do
-  [ -f "${guest_rc_file}" ] && break
-  sleep 1
-done
-
 if [ ! -f "${guest_rc_file}" ]; then
   echo "WARNING: missing ${guest_rc_file}; treating as failure"
   exit 2
