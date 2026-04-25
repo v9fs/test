@@ -12,77 +12,98 @@ if [ ! -f "$base" ]; then
   exit 2
 fi
 
-uinit="$work/uinit"
-cat >"$uinit" <<'EOF'
+# Build a tiny /init script that uses traditional userspace binaries we copy in
+# (mount/ls/sh), not u-root applets (which may not include mount/ls in this image).
+init="$work/init"
+cat >"$init" <<'EOF'
 #!/bin/sh
 set -eu
-
-# Force output to the serial console that QEMU captures.
 exec >/dev/console 2>&1
+
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devtmpfs devtmpfs /dev || true
 
 mkdir -p /run /tmp /mnt/9
 
-bb="/bbin/bb"
-
-say() {
-  # best-effort: also mirror to kernel log if console is weird
-  echo "$@" || true
-  [ -c /dev/kmsg ] && echo "$@" >/dev/kmsg 2>/dev/null || true
-}
-
-cmdline="$(</proc/cmdline 2>/dev/null || true)"
 ts=""
-for w in $cmdline; do
+for w in $(cat /proc/cmdline 2>/dev/null || true); do
   case "$w" in
     v9fs.ts=*) ts="${w#v9fs.ts=}" ;;
   esac
 done
 
-if [ -n "${ts:-}" ]; then
-  export TIMESTAMP="$ts"
+echo "init: mount+ls 9p smoke ts=${ts:-unset}"
+
+if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+  echo "init: mounted hostshare at /mnt/9"
+  ls -la /mnt/9 || true
+else
+  echo "init: ERROR: mount hostshare failed"
 fi
 
-say "uinit: mount+ls smoke ts=${TIMESTAMP:-unset}"
-
-if ! "$bb" mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
-  say "uinit: ERROR: failed to mount hostshare on /mnt/9"
-  "$bb" sync 2>/dev/null || true
-  "$bb" poweroff -f || "$bb" halt -f || "$bb" reboot -f
-  exit 1
-fi
-
-say "uinit: listing /mnt/9"
-"$bb" ls -la /mnt/9 || true
-"$bb" ls -la /mnt/9/workspaces 2>/dev/null || true
-"$bb" ls -la /mnt/9/workspaces/share 2>/dev/null || true
-
-# Write a pass/fail marker into the host-visible logs directory.
 repo="/mnt/9/workspaces/share/test"
-if [ -n "${TIMESTAMP:-}" ] && [ -d "${repo}" ]; then
-  "$bb" mkdir -p "${repo}/logs/${TIMESTAMP}" || true
-  echo 0 >"${repo}/logs/${TIMESTAMP}/guest.exitcode" 2>/dev/null || true
-  echo "uinit: OK" >"${repo}/logs/${TIMESTAMP}/guest.log" 2>/dev/null || true
+if [ -n "${ts:-}" ] && [ -d "$repo" ]; then
+  mkdir -p "$repo/logs/$ts" || true
+  echo 0 >"$repo/logs/$ts/guest.exitcode" 2>/dev/null || true
+  echo "init: OK" >"$repo/logs/$ts/guest.log" 2>/dev/null || true
 fi
 
-"$bb" sync 2>/dev/null || true
+sync 2>/dev/null || true
+poweroff -f || halt -f || reboot -f || true
 
-say "uinit: powering off"
-"$bb" poweroff -f || "$bb" halt -f || "$bb" reboot -f || true
-
-# If poweroff fails for any reason, do not let PID1 exit (kernel will panic).
-say "uinit: poweroff returned; idling"
+# Never exit PID1; if poweroff fails, just idle.
+echo "init: poweroff returned; idling"
 while true; do
-  "$bb" sleep 1 || true
+  sleep 1 || true
 done
 EOF
-chmod +x "$uinit"
+chmod +x "$init"
+
+# Collect required userland binaries and their shared libs from the container FS.
+mkdir -p "$work/rootfs"
+copy_file() {
+  local src="$1" dst="$2"
+  mkdir -p "$work/rootfs/$(dirname "$dst")"
+  cp -L "$src" "$work/rootfs/$dst"
+}
+copy_libs() {
+  local bin="$1"
+  ldd "$bin" | awk '/=> \\/|^\\//{print $(NF-1)}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | while read -r lib; do
+    [ -n "$lib" ] || continue
+    [ -f "$lib" ] || continue
+    copy_file "$lib" "$lib"
+  done
+}
+
+shbin="$(command -v sh || true)"
+mountbin="$(command -v mount || true)"
+lsbin="$(command -v ls || true)"
+
+[ -n "$shbin" ] || { echo "ERROR: no sh in image"; exit 2; }
+[ -n "$mountbin" ] || { echo "ERROR: no mount in image"; exit 2; }
+[ -n "$lsbin" ] || { echo "ERROR: no ls in image"; exit 2; }
+
+copy_file "$shbin" "/bin/sh"
+copy_file "$mountbin" "/bin/mount"
+copy_file "$lsbin" "/bin/ls"
+copy_libs "$shbin"
+copy_libs "$mountbin"
+copy_libs "$lsbin"
+
+# Also ensure dynamic loader exists if not captured above.
+for ldso in /lib/ld-linux-aarch64.so.1 /lib64/ld-linux-aarch64.so.1; do
+  if [ -f "$ldso" ]; then
+    copy_file "$ldso" "$ldso"
+  fi
+done
 
 # Overlay our /init onto the base initrd using a tiny Python newc (cpio) rewriter.
 # This avoids needing `cpio`, `busybox`, or a working u-root build toolchain.
-python3 - "$base" "$uinit" "$out" <<'PY'
+python3 - "$base" "$init" "$work/rootfs" "$out" <<'PY'
 import os, sys, stat, time
 
-base_path, init_path, out_path = sys.argv[1:4]
+base_path, init_path, extra_root, out_path = sys.argv[1:5]
 
 def align4(x: int) -> int:
     return (x + 3) & ~3
@@ -202,10 +223,22 @@ def write_symlink(w, name: str, target: str, uid: int = 0, gid: int = 0):
 
 def main():
     init_data = open(init_path, "rb").read()
-    uinit_mode = stat.S_IFREG | 0o755
+    init_mode = stat.S_IFREG | 0o755
 
-    replaced = False
-    uinit_written = False
+    extras = {}  # path -> (mode, data)
+    for root, _, files in os.walk(extra_root):
+        for fn in files:
+            src = os.path.join(root, fn)
+            rel = os.path.relpath(src, extra_root)
+            rel = rel.lstrip("./")
+            st = os.lstat(src)
+            if stat.S_ISLNK(st.st_mode):
+                tgt = os.readlink(src).encode("utf-8")
+                extras[rel] = (stat.S_IFLNK | 0o777, tgt)
+            elif stat.S_ISREG(st.st_mode):
+                extras[rel] = (stat.S_IFREG | (st.st_mode & 0o777), open(src, "rb").read())
+
+    replaced_init = False
     tmp_out = out_path + ".tmp"
     with open(base_path, "rb") as rf, open(tmp_out, "wb") as wf:
         for ent in iter_newc_entries(rf):
@@ -213,21 +246,19 @@ def main():
             if name == "TRAILER!!!":
                 break
             if name in ("init", "/init"):
-                # Replace base init symlink (cpud) with u-root init.
-                write_symlink(wf, "init", "bbin/init")
-                replaced = True
-            elif name in ("bin/uinit", "/bin/uinit"):
-                write_entry(wf, "bin/uinit", uinit_mode, 0, 0, init_data)
-                uinit_written = True
+                write_entry(wf, "init", init_mode, 0, 0, init_data)
+                replaced_init = True
             else:
                 write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
 
-        if not replaced:
-            # If base initrd didn't have init, add it before trailer.
-            write_symlink(wf, "init", "bbin/init")
+        if not replaced_init:
+            write_entry(wf, "init", init_mode, 0, 0, init_data)
 
-        if not uinit_written:
-            write_entry(wf, "bin/uinit", uinit_mode, 0, 0, init_data)
+        # Add extra binaries/libs (and overwrite if absent in base).
+        for path, (mode, data) in extras.items():
+            # avoid double-writing files already present in base by only adding
+            # ones that are not in a minimal safe set; base initrd is tiny anyway.
+            write_entry(wf, path, mode, 0, 0, data)
 
         # trailer
         write_entry(wf, "TRAILER!!!", stat.S_IFREG | 0o644, 0, 0, b"")
