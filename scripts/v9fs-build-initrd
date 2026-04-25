@@ -76,20 +76,15 @@ copy_libs() {
   done
 }
 
-shbin="$(command -v sh || true)"
-mountbin="$(command -v mount || true)"
-lsbin="$(command -v ls || true)"
-
-[ -n "$shbin" ] || { echo "ERROR: no sh in image"; exit 2; }
-[ -n "$mountbin" ] || { echo "ERROR: no mount in image"; exit 2; }
-[ -n "$lsbin" ] || { echo "ERROR: no ls in image"; exit 2; }
-
-copy_file "$shbin" "/bin/sh"
-copy_file "$mountbin" "/bin/mount"
-copy_file "$lsbin" "/bin/ls"
-copy_libs "$shbin"
-copy_libs "$mountbin"
-copy_libs "$lsbin"
+need_bins=(
+  sh mount ls mkdir sync sleep poweroff halt reboot
+)
+for b in "${need_bins[@]}"; do
+  p="$(command -v "$b" || true)"
+  [ -n "$p" ] || { echo "ERROR: missing $b in image"; exit 2; }
+  copy_file "$p" "/bin/$b"
+  copy_libs "$p"
+done
 
 # Also ensure dynamic loader exists if not captured above.
 for ldso in /lib/ld-linux-aarch64.so.1 /lib64/ld-linux-aarch64.so.1; do
