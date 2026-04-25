@@ -12,54 +12,49 @@ if [ ! -f "$base" ]; then
   exit 2
 fi
 
-init="$work/init"
-cat >"$init" <<'EOF'
+uinit="$work/uinit"
+cat >"$uinit" <<'EOF'
 #!/bin/sh
 set -eu
 
-BB=/bbin/bb
-bb() { "$BB" "$@"; }
+mkdir -p /run /tmp /mnt/9
 
-bb mount -t proc proc /proc
-bb mount -t sysfs sysfs /sys
-bb mount -t devtmpfs devtmpfs /dev || true
-
-bb mkdir -p /run /tmp /mnt/9
-
-if ! bb mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
-  echo "initrd: ERROR: failed to mount hostshare on /mnt/9"
+# `v9fs/docker` initrd is u-root based. With `/init` pointing at `bbin/init`,
+# this script is invoked as u-root's uinit (see `uroot.uinitcmd=/uinit`).
+if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+  echo "uinit: ERROR: failed to mount hostshare on /mnt/9"
 fi
 
-cmdline="$(bb cat /proc/cmdline 2>/dev/null || true)"
+cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
 case "$cmdline" in
   *v9fs.run=1*)
-    tests="$(printf %s "$cmdline" | bb sed -n 's/.*v9fs.tests=\\([^ ]*\\).*/\\1/p')"
-    ts="$(printf %s "$cmdline" | bb sed -n 's/.*v9fs.ts=\\([^ ]*\\).*/\\1/p')"
+    tests="$(printf %s "$cmdline" | sed -n 's/.*v9fs.tests=\\([^ ]*\\).*/\\1/p')"
+    ts="$(printf %s "$cmdline" | sed -n 's/.*v9fs.ts=\\([^ ]*\\).*/\\1/p')"
     : "${tests:=smoke}"
     if [ -n "${ts:-}" ]; then
       export TIMESTAMP="$ts"
     fi
 
-    echo "initrd: running guest tests tests=$tests ts=${TIMESTAMP:-unset}"
+    echo "uinit: running guest tests tests=$tests ts=${TIMESTAMP:-unset}"
     if [ -x /mnt/9/test/scripts/v9fs-guest-run ]; then
       /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" || true
     else
-      echo "initrd: missing /mnt/9/test/scripts/v9fs-guest-run"
-      bb ls -la /mnt/9/test/scripts 2>/dev/null || true
+      echo "uinit: missing /mnt/9/test/scripts/v9fs-guest-run"
+      ls -la /mnt/9/test/scripts 2>/dev/null || true
     fi
-    bb sync 2>/dev/null || true
-    bb poweroff -f || bb halt -f || bb reboot -f
+    sync 2>/dev/null || true
+    poweroff -f || halt -f || reboot -f
     ;;
 esac
 
-echo "initrd up; interactive shell"
+echo "uinit: interactive shell"
 exec sh
 EOF
-chmod +x "$init"
+chmod +x "$uinit"
 
 # Overlay our /init onto the base initrd using a tiny Python newc (cpio) rewriter.
 # This avoids needing `cpio`, `busybox`, or a working u-root build toolchain.
-python3 - "$base" "$init" "$out" <<'PY'
+python3 - "$base" "$uinit" "$out" <<'PY'
 import os, sys, stat, time
 
 base_path, init_path, out_path = sys.argv[1:4]
@@ -176,11 +171,16 @@ def write_entry(w, name: str, mode: int, uid: int, gid: int, data: bytes):
         if pad:
             w.write(b"\x00" * pad)
 
+def write_symlink(w, name: str, target: str, uid: int = 0, gid: int = 0):
+    mode = stat.S_IFLNK | 0o777
+    write_entry(w, name, mode, uid, gid, target.encode("utf-8"))
+
 def main():
     init_data = open(init_path, "rb").read()
-    init_mode = stat.S_IFREG | 0o755
+    uinit_mode = stat.S_IFREG | 0o755
 
     replaced = False
+    uinit_written = False
     tmp_out = out_path + ".tmp"
     with open(base_path, "rb") as rf, open(tmp_out, "wb") as wf:
         for ent in iter_newc_entries(rf):
@@ -188,14 +188,21 @@ def main():
             if name == "TRAILER!!!":
                 break
             if name in ("init", "/init"):
-                write_entry(wf, "init", init_mode, 0, 0, init_data)
+                # Replace base init symlink (cpud) with u-root init.
+                write_symlink(wf, "init", "bbin/init")
                 replaced = True
+            elif name in ("uinit", "/uinit"):
+                write_entry(wf, "uinit", uinit_mode, 0, 0, init_data)
+                uinit_written = True
             else:
                 write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
 
         if not replaced:
             # If base initrd didn't have init, add it before trailer.
-            write_entry(wf, "init", init_mode, 0, 0, init_data)
+            write_symlink(wf, "init", "bbin/init")
+
+        if not uinit_written:
+            write_entry(wf, "uinit", uinit_mode, 0, 0, init_data)
 
         # trailer
         write_entry(wf, "TRAILER!!!", stat.S_IFREG | 0o644, 0, 0, b"")
