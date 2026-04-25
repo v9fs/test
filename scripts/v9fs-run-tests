@@ -65,7 +65,8 @@ for i in $(seq 1 60); do
   # Ensure a stuck connect doesn't hang the harness.
   # `cpu` can block on 9p mount negotiation; cap total time per probe.
   set +e
-  out="$(timeout 8s "${cpu_bin}" -d -net tcp4 -key "${cpu_key}" -sp 17010 -timeout9p 8s 127.0.0.1 uname -rm 2>&1)"
+  # For a basic liveness probe, use SSH-only mode to avoid hanging on 9p mount negotiation.
+  out="$(timeout 8s "${cpu_bin}" -d -ssh -net tcp4 -key "${cpu_key}" -sp 17010 127.0.0.1 uname -rm 2>&1)"
   st="$?"
   set -e
   if [ "${st}" = "0" ]; then
@@ -86,7 +87,7 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-if ! timeout 5s "${cpu_bin}" -d -key "${cpu_key}" -sp 17010 -timeout9p 5s 127.0.0.1 uname -rm >/dev/null 2>&1; then
+if ! timeout 5s "${cpu_bin}" -d -ssh -net tcp4 -key "${cpu_key}" -sp 17010 127.0.0.1 uname -rm >/dev/null 2>&1; then
   echo "ERROR: cpud did not become reachable."
   echo "Last cpu error:"
   printf '%s\n' "${last_err}"
@@ -95,7 +96,7 @@ fi
 
 echo "Running guest tests via cpu (tests=${tests} type=${type} check=${check})"
 export LOG="logs/${TIMESTAMP}"
-"${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 \
+"${cpu_bin}" -ssh -net tcp4 -key "${cpu_key}" -sp 17010 127.0.0.1 \
   /mnt/9/workspaces/share/test/scripts/v9fs-guest-run "${tests}" "${type}" "${check}" || true
 
 # Wait for QEMU to exit (guest may still be running; kill if needed).
