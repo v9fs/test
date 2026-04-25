@@ -20,9 +20,10 @@ cat >"$init" <<'EOF'
 set -eu
 exec >/dev/console 2>&1
 
-mount -t proc proc /proc || true
-mount -t sysfs sysfs /sys || true
-mount -t devtmpfs devtmpfs /dev || true
+mkdir -p /proc /sys /dev
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 
 mkdir -p /run /tmp /mnt/9
 
