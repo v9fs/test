@@ -50,7 +50,9 @@ if [ -n "${ts:-}" ] && [ -d "$repo" ]; then
 fi
 
 sync 2>/dev/null || true
-poweroff -f || halt -f || reboot -f || true
+echo "init: requesting poweroff via sysrq"
+echo o >/proc/sysrq-trigger 2>/dev/null || true
+echo b >/proc/sysrq-trigger 2>/dev/null || true
 
 # Never exit PID1; if poweroff fails, just idle.
 echo "init: poweroff returned; idling"
@@ -77,7 +79,7 @@ copy_libs() {
 }
 
 need_bins=(
-  sh mount ls mkdir sync sleep poweroff halt reboot
+  sh mount ls mkdir sync sleep
 )
 for b in "${need_bins[@]}"; do
   p="$(command -v "$b" || true)"
