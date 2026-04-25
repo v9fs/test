@@ -40,16 +40,26 @@ export QEMU_STREAM_LOG=1
 /home/v9fs-test/test/qemu.bash
 
 echo "Waiting for guest cpud..."
+last_err=""
 for _ in $(seq 1 60); do
-  if "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s localhost uname -rm >/dev/null 2>&1; then
+  if out="$("${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 uname -rm 2>&1)"; then
+    echo "Guest cpud is up."
     break
   fi
+  last_err="$out"
   sleep 1
 done
 
+if ! "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 uname -rm >/dev/null 2>&1; then
+  echo "ERROR: cpud did not become reachable."
+  echo "Last cpu error:"
+  printf '%s\n' "${last_err}"
+  exit 2
+fi
+
 echo "Running guest tests via cpu (tests=${tests} type=${type} check=${check})"
 export LOG="logs/${TIMESTAMP}"
-"${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s localhost \
+"${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 \
   /mnt/9/workspaces/share/test/scripts/v9fs-guest-run "${tests}" "${type}" "${check}" || true
 
 # Wait for QEMU to exit (guest may still be running; kill if needed).

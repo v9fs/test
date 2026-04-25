@@ -36,7 +36,7 @@ qemu_args=(
   -object rng-random,filename=/dev/urandom,id=rng0
   -device virtio-rng-pci,rng=rng0
   -device virtio-net-pci,netdev=n1
-  -netdev user,id=n1,hostfwd=tcp:127.0.0.1:17010-:17010
+  -netdev user,id=n1,hostfwd=tcp:0.0.0.0:17010-:17010
   -fsdev "local,security_model=none,writeout=immediate,id=fsdev0,path=${FSDEV_PATH}"
   -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare
   -append "${APPEND} ${EXTRA_APPEND:-}"
