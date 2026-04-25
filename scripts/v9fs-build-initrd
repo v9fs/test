@@ -17,21 +17,24 @@ cat >"$init" <<'EOF'
 #!/bin/sh
 set -eu
 
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev || true
+BB=/bbin/bb
+bb() { "$BB" "$@"; }
 
-mkdir -p /run /tmp /mnt/9
+bb mount -t proc proc /proc
+bb mount -t sysfs sysfs /sys
+bb mount -t devtmpfs devtmpfs /dev || true
 
-if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+bb mkdir -p /run /tmp /mnt/9
+
+if ! bb mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
   echo "initrd: ERROR: failed to mount hostshare on /mnt/9"
 fi
 
-cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
+cmdline="$(bb cat /proc/cmdline 2>/dev/null || true)"
 case "$cmdline" in
   *v9fs.run=1*)
-    tests="$(printf %s "$cmdline" | sed -n 's/.*v9fs.tests=\\([^ ]*\\).*/\\1/p')"
-    ts="$(printf %s "$cmdline" | sed -n 's/.*v9fs.ts=\\([^ ]*\\).*/\\1/p')"
+    tests="$(printf %s "$cmdline" | bb sed -n 's/.*v9fs.tests=\\([^ ]*\\).*/\\1/p')"
+    ts="$(printf %s "$cmdline" | bb sed -n 's/.*v9fs.ts=\\([^ ]*\\).*/\\1/p')"
     : "${tests:=smoke}"
     if [ -n "${ts:-}" ]; then
       export TIMESTAMP="$ts"
@@ -42,10 +45,10 @@ case "$cmdline" in
       /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" || true
     else
       echo "initrd: missing /mnt/9/test/scripts/v9fs-guest-run"
-      ls -la /mnt/9/test/scripts 2>/dev/null || true
+      bb ls -la /mnt/9/test/scripts 2>/dev/null || true
     fi
-    sync 2>/dev/null || true
-    poweroff -f || halt -f || reboot -f
+    bb sync 2>/dev/null || true
+    bb poweroff -f || bb halt -f || bb reboot -f
     ;;
 esac
 

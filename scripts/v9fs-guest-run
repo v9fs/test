@@ -7,9 +7,12 @@ repo="/mnt/9/test"
 ts="${TIMESTAMP:-$(date +%s)}"
 
 logdir="$repo/logs/$ts"
-mkdir -p "$logdir"
-rm -f "$repo/logs/current"
-ln -s "$ts" "$repo/logs/current"
+BB=/bbin/bb
+bb() { "$BB" "$@"; }
+
+bb mkdir -p "$logdir"
+bb rm -f "$repo/logs/current"
+bb ln -s "$ts" "$repo/logs/current"
 
 guestlog="$logdir/guest.log"
 rcfile="$logdir/guest.exitcode"
@@ -17,40 +20,40 @@ rcfile="$logdir/guest.exitcode"
 exec >"$guestlog" 2>&1
 
 echo "GUEST: tests=$tests ts=$ts"
-echo "GUEST: mounted /mnt/9: $(mount | grep ' /mnt/9 ' || true)"
+echo "GUEST: mounted /mnt/9: $(bb mount | bb grep ' /mnt/9 ' || true)"
 
 tmpdir="/mnt/9/tmpdir"
-mkdir -p "$tmpdir"
+bb mkdir -p "$tmpdir"
 
 rc=0
 
 case "$tests" in
   smoke|*)
     t="$tmpdir/smoke.$$"
-    mkdir -p "$t"
+    bb mkdir -p "$t"
 
     echo "GUEST: write/read basic file"
     printf 'hello-9p\n' >"$t/hello.txt" || rc=1
-    [ "$(cat "$t/hello.txt" 2>/dev/null || true)" = "hello-9p" ] || rc=1
+    [ "$(bb cat "$t/hello.txt" 2>/dev/null || true)" = "hello-9p" ] || rc=1
 
     echo "GUEST: rename + append"
-    mv "$t/hello.txt" "$t/renamed.txt" || rc=1
+    bb mv "$t/hello.txt" "$t/renamed.txt" || rc=1
     printf 'more\n' >>"$t/renamed.txt" || rc=1
-    grep -q 'more' "$t/renamed.txt" || rc=1
+    bb grep -q 'more' "$t/renamed.txt" || rc=1
 
     echo "GUEST: mkdir/list/rmdir"
-    mkdir -p "$t/dirA" || rc=1
-    ls -la "$t" >/dev/null 2>&1 || rc=1
-    rmdir "$t/dirA" || rc=1
+    bb mkdir -p "$t/dirA" || rc=1
+    bb ls -la "$t" >/dev/null 2>&1 || rc=1
+    bb rmdir "$t/dirA" || rc=1
 
     echo "GUEST: unlink cleanup"
-    rm -f "$t/renamed.txt" || rc=1
-    rmdir "$t" || rc=1
+    bb rm -f "$t/renamed.txt" || rc=1
+    bb rmdir "$t" || rc=1
     ;;
 esac
 
 echo "$rc" >"$rcfile" 2>/dev/null || true
-sync 2>/dev/null || true
+bb sync 2>/dev/null || true
 echo "GUEST: done rc=$rc"
 exit "$rc"
 
