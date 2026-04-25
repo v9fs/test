@@ -33,11 +33,18 @@ export INITRD="${INITRD:-/opt/v9fs/initrd.cpio}"
 # Keep kernel cmdline for debugging, but don't rely on it for test execution.
 export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
 
-# Stream QEMU serial into the container logs (and tee to logs/<ts>/qemu.log).
-export QEMU_DAEMONIZE=0
-export QEMU_STREAM_LOG=1
+# Run QEMU daemonized, but stream qemu.log into docker logs.
+export QEMU_DAEMONIZE=1
+export QEMU_STREAM_LOG=0
 
 /home/v9fs-test/test/qemu.bash
+
+# Stream guest serial log into the docker log while we proceed.
+tail_pid=""
+if [ -f "${QEMULOG}" ]; then
+  tail -n +1 -F "${QEMULOG}" &
+  tail_pid="$!"
+fi
 
 echo "Waiting for guest cpud..."
 last_err=""
@@ -70,6 +77,10 @@ if [ -f "${PIDFILE}" ]; then
     sleep 1
   done
   kill "${pid}" 2>/dev/null || true
+fi
+
+if [ -n "${tail_pid}" ]; then
+  kill "${tail_pid}" 2>/dev/null || true
 fi
 
 chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
