@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Prepare a build tree for the diod sharness regression suite.
+# Output is placed under /workspaces/tmp so it is visible to the guest via 9p-root export.
+
+src="${DIOD_SRC:-/workspaces/tmp/diod-src}"
+build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
+repo="${DIOD_REPO:-https://github.com/chaos/diod}"
+ref="${DIOD_REF:-master}"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+  autoconf automake libtool pkg-config \
+  gcc make \
+  lua5.1 liblua5.1-0-dev \
+  libcap-dev libmunge-dev libwrap0-dev \
+  tclsh rsync perl \
+  sudo \
+  acl \
+  dbench postmark
+
+# Clone/update source.
+if [ ! -d "${src}/.git" ]; then
+  rm -rf "${src}"
+  git clone --depth 1 "${repo}" "${src}"
+fi
+git -C "${src}" fetch --depth 1 origin "${ref}" || true
+git -C "${src}" checkout -q "${ref}" || true
+
+# Autotools bootstrap.
+(cd "${src}" && ./autogen.sh)
+
+# Build in a content-addressed directory (avoids cleanup issues with mixed uid mappings).
+build_real="/workspaces/tmp/diod-build-$(git -C "${src}" rev-parse --short HEAD)"
+mkdir -p "${build_real}"
+
+(cd "${build_real}" && "${src}/configure")
+(cd "${build_real}" && make -j"$(nproc)")
+
+# Record the build directory for the guest (symlinks can be awkward across 9p+bind mounts).
+echo "${build_real}" > /workspaces/tmp/diod-build.LATEST
+
+# The guest writes test logs into the build tree; ensure it's writable over 9p
+# regardless of uid mapping.
+chmod -R a+rwX "${src}" "${build_real}" || true
+
+echo "Prepared diod build at ${build_real}"
+ls -la "${build_real}/t" | head -n 50 || true
+

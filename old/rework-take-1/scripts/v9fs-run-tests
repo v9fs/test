@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tests="${1:-short}"
+type="${2:-ci}"
+check="${3:-1}"
+
+# Ensure artifacts created by root inside Docker are readable by the
+# GitHub Actions runner user when uploading `logs/` as an artifact.
+umask 022
+
+# Default to the container-provided tools exposed to the guest via 9p.
+export TESTBIN="${TESTBIN:-/home/v9fs-test/testbin}"
+
+export TIMESTAMP="${TIMESTAMP:-$(date +%s)}"
+mkdir -p "logs/${TIMESTAMP}"
+export QEMULOG="logs/${TIMESTAMP}/qemu.log"
+export PIDFILE="/home/v9fs-test/qemu.pid"
+
+# Build a stable export root so 9p sees our bind mounts.
+mkdir -p /workspaces/share
+mkdir -p /workspaces/share/test /workspaces/share/tmp /workspaces/share/kernel /workspaces/share/testbin
+mountpoint -q /workspaces/share/test || mount --bind /home/v9fs-test/test /workspaces/share/test
+mountpoint -q /workspaces/share/tmp || mount --bind /workspaces/tmp /workspaces/share/tmp
+mountpoint -q /workspaces/share/kernel || mount --bind /workspaces/kernel /workspaces/share/kernel
+mountpoint -q /workspaces/share/testbin || mount --bind /home/v9fs-test/testbin /workspaces/share/testbin
+
+export FSDEV_PATH="/workspaces/share"
+
+# Run the suite inside the guest and poweroff when complete.
+export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.type=${type} v9fs.check=${check} v9fs.ts=${TIMESTAMP}"
+
+/home/v9fs-test/test/qemu.bash
+
+# Wait for QEMU to exit (guest powers off).
+if [ -f "${PIDFILE}" ]; then
+  pid="$(cat "${PIDFILE}")"
+  while kill -0 "${pid}" 2>/dev/null; do
+    sleep 1
+  done
+fi
+
+echo "QEMU run complete; logs at ${QEMULOG}"
+
+# Make logs readable for artifact upload on the host runner.
+chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
+
+# The guest writes a status marker into the shared logs directory.
+# Use it to fail CI while still running the whole suite.
+guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
+for _ in 1 2 3 4 5; do
+  [ -f "${guest_rc_file}" ] && break
+  sleep 1
+done
+
+if [ ! -f "${guest_rc_file}" ]; then
+  echo "WARNING: missing ${guest_rc_file}; treating as failure"
+  exit 2
+fi
+
+guest_rc="$(cat "${guest_rc_file}" 2>/dev/null || echo 1)"
+if [ "${guest_rc}" != "0" ]; then
+  echo "Guest reported failures (rc=${guest_rc})"
+  exit "${guest_rc}"
+fi
+

@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out="${1:-/home/v9fs-test/initrd.cpio}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+mkdir -p \
+  "$work"/{bin,sbin,etc,proc,sys,dev,run,tmp,mnt/9,mnt/root,root,root/.ssh,home/v9fs-test/.ssh}
+
+cat >"$work/init" <<'EOF'
+#!/bin/sh
+set -eu
+
+export PATH=/bin:/sbin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev || true
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts || true
+
+mkdir -p /run /tmp
+
+ip link set lo up || true
+ip link set eth0 up || true
+if command -v udhcpc >/dev/null 2>&1; then
+  udhcpc -i eth0 -q -t 5 -n || true
+fi
+
+mkdir -p /mnt/9 /mnt/root /root
+
+# Mount hostshare so we can access the test repo/scripts.
+if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+  echo "initrd: WARNING: failed to mount hostshare on /mnt/9"
+fi
+
+# If cpu/scp uploaded an fstab, mount it. (Errors are ok; tests will surface failures.)
+if [ -f /etc/fstab ]; then
+  mkdir -p /mnt/root /mnt/9
+  mount -a || true
+fi
+
+mkdir -p /home/v9fs-test/.ssh
+chmod 700 /home/v9fs-test/.ssh
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+
+if [ -f /home/v9fs-test/.ssh/authorized_keys ]; then
+  chmod 600 /home/v9fs-test/.ssh/authorized_keys
+fi
+if [ -f /root/.ssh/authorized_keys ]; then
+  chmod 600 /root/.ssh/authorized_keys
+fi
+
+# Start ssh server for the host-side `cpu` helper.
+# Option A: run tests directly in guest (no SSH transport).
+cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
+case "$cmdline" in
+  *v9fs.run=1*)
+    tests="$(echo "$cmdline" | sed -n 's/.*v9fs.tests=\([^ ]*\).*/\1/p')"
+    type="$(echo "$cmdline" | sed -n 's/.*v9fs.type=\([^ ]*\).*/\1/p')"
+    check="$(echo "$cmdline" | sed -n 's/.*v9fs.check=\([^ ]*\).*/\1/p')"
+    ts="$(echo "$cmdline" | sed -n 's/.*v9fs.ts=\([^ ]*\).*/\1/p')"
+    : "${tests:=smoke}"
+    : "${type:=ci}"
+    : "${check:=1}"
+    if [ -n "${ts:-}" ]; then
+      export TIMESTAMP="$ts"
+    fi
+
+    echo "initrd: running guest tests tests=$tests type=$type check=$check"
+    if [ -f /mnt/9/test/scripts/v9fs-guest-run ]; then
+      /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" "$type" "$check" || true
+    else
+      echo "initrd: missing /mnt/9/test/scripts/v9fs-guest-run"
+      ls -la /mnt/9/test/scripts 2>/dev/null || true
+      ls -la /mnt/9/test 2>/dev/null || true
+    fi
+    sync 2>/dev/null || true
+    echo "initrd: powering off"
+    poweroff -f || halt -f || reboot -f
+    ;;
+esac
+
+echo "initrd up; interactive shell"
+exec sh
+EOF
+chmod +x "$work/init"
+
+# Minimal /etc files
+cat >"$work/etc/passwd" <<'EOF'
+root:x:0:0:root:/root:/bin/sh
+EOF
+cat >"$work/etc/group" <<'EOF'
+root:x:0:
+EOF
+
+# Authorized keys for root login (dropbear checks /root/.ssh and /home/<user> too; we use /home/v9fs-test).
+pubkey="$(cat /home/v9fs-test/.ssh/identity.pub)"
+mkdir -p "$work/home/v9fs-test/.ssh"
+printf '%s\n' "$pubkey" >"$work/home/v9fs-test/.ssh/authorized_keys"
+mkdir -p "$work/root/.ssh"
+printf '%s\n' "$pubkey" >"$work/root/.ssh/authorized_keys"
+
+# Pre-generate a host key for dropbear so boot doesn't block on keygen.
+mkdir -p "$work/etc/dropbear"
+if command -v dropbearkey >/dev/null 2>&1; then
+  dropbearkey -t ed25519 -f "$work/etc/dropbear/dropbear_ed25519_host_key" >/dev/null 2>&1 || true
+fi
+
+# Busybox static provides core utils (sh, mount, udhcpc, etc.)
+cp /bin/busybox "$work/bin/busybox"
+for a in sh mount mkdir ln ls cat echo sleep uname ps kill ip udhcpc netstat poweroff halt reboot date awk sed diff cp rm sort; do
+  ln -s /bin/busybox "$work/bin/$a" 2>/dev/null || true
+done
+
+# Dropbear + keygen (dynamic; copy required libs)
+cp /usr/sbin/dropbear "$work/sbin/dropbear"
+cp /usr/bin/dropbearkey "$work/bin/dropbearkey"
+
+copy_libs() {
+  local bin="$1"
+  ldd "$bin" | awk '/=> \//{print $3} /^\//{print $1}' | while read -r lib; do
+    mkdir -p "$work/$(dirname "$lib")"
+    cp -L "$lib" "$work/$lib"
+  done
+}
+copy_libs /usr/sbin/dropbear
+copy_libs /usr/bin/dropbearkey
+
+# Some environments omit the dynamic loader from `ldd` parsing; ensure it exists.
+if [ -f /lib/ld-linux-aarch64.so.1 ]; then
+  mkdir -p "$work/lib"
+  cp -L /lib/ld-linux-aarch64.so.1 "$work/lib/ld-linux-aarch64.so.1"
+fi
+if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
+  mkdir -p "$work/lib64"
+  cp -L /lib64/ld-linux-x86-64.so.2 "$work/lib64/ld-linux-x86-64.so.2"
+fi
+
+# Bench/test helpers are executed inside the initrd (from 9p), so the initrd
+# must include their shared library dependencies.
+for b in /usr/bin/dbench /usr/bin/postmark /usr/local/bin/fsx; do
+  if [ -x "$b" ]; then
+    copy_libs "$b"
+  fi
+done
+
+(cd "$work" && find . -print0 | cpio --null -ov --format=newc) >"$out"
+
+echo "Wrote initrd to $out"
+

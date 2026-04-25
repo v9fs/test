@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build/install benchmark binaries into /workspaces/tmp/testbin so they are
+# visible to the guest via the QEMU 9p root export (FSDEV_PATH=/).
+
+root="${TESTBIN_ROOT:-/workspaces/tmp/testbin}"
+mkdir -p "${root}"/{fsx,postmark,dbench}
+
+need_apt=0
+if [ ! -x "${root}/dbench/dbench" ] || [ ! -x "${root}/postmark/postmark" ]; then
+  need_apt=1
+fi
+
+if [ "${need_apt}" = "1" ]; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y --no-install-recommends dbench postmark
+fi
+
+if [ ! -x "${root}/dbench/dbench" ]; then
+  cp -f /usr/bin/dbench "${root}/dbench/dbench"
+fi
+if [ ! -f "${root}/dbench/client.txt" ]; then
+  if [ -f /usr/share/dbench/client.txt ]; then
+    cp -f /usr/share/dbench/client.txt "${root}/dbench/client.txt"
+  fi
+fi
+
+if [ ! -x "${root}/postmark/postmark" ]; then
+  cp -f /usr/bin/postmark "${root}/postmark/postmark"
+fi
+
+if [ ! -x "${root}/fsx/fsx" ]; then
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  curl -fsSL \
+    https://raw.githubusercontent.com/freebsd/freebsd-src/main/tools/regression/fsx/fsx.c \
+    -o "${tmp}/fsx.c"
+  gcc -O2 -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -include stdint.h -include time.h \
+    -Wall -Wextra "${tmp}/fsx.c" -o "${root}/fsx/fsx"
+  chmod +x "${root}/fsx/fsx"
+fi
+
+chmod -R a+rX "${root}" || true
+
+echo "Prepared benchmarks under ${root}:"
+ls -la "${root}/fsx/fsx" "${root}/postmark/postmark" "${root}/dbench/dbench" || true
+

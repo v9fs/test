@@ -1,153 +1,343 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-out="${1:-/home/v9fs-test/initrd.cpio}"
+out="${1:-/opt/v9fs/initrd.patched.cpio}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-mkdir -p \
-  "$work"/{bin,sbin,etc,proc,sys,dev,run,tmp,mnt/9,mnt/root,root,root/.ssh,home/v9fs-test/.ssh}
+# We run inside the `v9fs/docker` image, which provides a base initrd at this path.
+base="${UROOT_BASE:-/opt/v9fs/initrd.cpio}"
+if [ ! -f "$base" ]; then
+  echo "ERROR: base initrd not found at $base"
+  exit 2
+fi
 
-cat >"$work/init" <<'EOF'
+# Build a tiny /init script that uses traditional userspace binaries we copy in
+# (mount/ls/sh), not u-root applets (which may not include mount/ls in this image).
+init="$work/init"
+cat >"$init" <<'EOF'
 #!/bin/sh
 set -eu
+exec >/dev/console 2>&1
 
-export PATH=/bin:/sbin
-
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
+mkdir -p /proc /sys /dev
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
 mount -t devtmpfs devtmpfs /dev || true
-mkdir -p /dev/pts
-mount -t devpts devpts /dev/pts || true
 
-mkdir -p /run /tmp
-
-ip link set lo up || true
-ip link set eth0 up || true
-if command -v udhcpc >/dev/null 2>&1; then
-  udhcpc -i eth0 -q -t 5 -n || true
+# Best-effort: start cpud in background (not used for smoke path).
+if [ -x /bbin/cpud ]; then
+  echo "init: starting cpud in background"
+  /bbin/cpud >/dev/console 2>&1 &
 fi
 
-mkdir -p /mnt/9 /mnt/root /root
+mkdir -p /run /tmp /mnt/9
 
-# Mount hostshare so we can access the test repo/scripts.
-if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
-  echo "initrd: WARNING: failed to mount hostshare on /mnt/9"
+tests="__V9FS_TESTS__"
+echo "init: tests=${tests}"
+
+if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+  echo "init: mounted hostshare at /mnt/9"
+  if [ -x /mnt/9/usr/sbin/chroot ] && [ -x /mnt/9/usr/bin/bash ]; then
+    echo "init: chroot -> /mnt/9, running container bash+ls"
+    rc=0
+    case "${tests}" in
+      smoke)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; ls -la /; ls -la /home/v9fs-test/test | head' || rc=$?
+        ;;
+      fsx)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir; rm -f /workspaces/tmpdir/fsx.testfile; /workspaces/tmp/testbin/fsx/fsx -N 1000 -R -W /workspaces/tmpdir/fsx.testfile' || rc=$?
+        ;;
+      postmark)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/postmark; cd /workspaces/tmpdir/postmark; /workspaces/tmp/testbin/postmark/postmark <<EOF\nset size 10 100000\nset number 2000\nset transactions 2000\nshow\nrun\nquit\nEOF' || rc=$?
+        ;;
+      dbench)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/dbench; /workspaces/tmp/testbin/dbench/dbench -t 30 -c /workspaces/tmp/testbin/dbench/client.txt -D /workspaces/tmpdir/dbench 16' || rc=$?
+        ;;
+      diod-regression)
+        # Run a subset of diod's kernel-client regression tests (sharness) inside the guest.
+        # Build artifacts are prepared on the host side under /workspaces/tmp/diod-build.
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
+          set -e
+          build="$(cat /workspaces/tmp/diod-build.LATEST 2>/dev/null || true)"
+          if [ -z "$build" ]; then
+            build="$(ls -d /workspaces/tmp/diod-build-* 2>/dev/null | sort | tail -n 1 || true)"
+          fi
+          [ -n "$build" ] || { echo "diod-regression: missing diod build dir"; exit 2; }
+          cd "$build"
+          # The sharness tests expect helper binaries from src/cmd check_PROGRAMS.
+          make -C src/cmd test_diodrun test_flock test_flock_single test_atomic_create test_pathwalk
+
+          # These are the kernel v9fs client oriented tests.
+          timeout 15m make -C t check TESTS="\
+            t0010-v9fs-runasuser.t \
+            t0011-v9fs-allsquash.t \
+            t0012-v9fs-multiuser.t \
+            t0013-v9fs-acl.t \
+            t0020-dbench.t \
+            t0021-postmark.t \
+          "
+
+          # Preserve the automake/sharness combined log in the harness logs dir.
+          cp -f "$build/t/test-suite.log" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
+        ' || rc=$?
+        ;;
+      *)
+        echo "init: ERROR: unknown tests=${tests}"
+        rc=2
+        ;;
+    esac
+  else
+    echo "init: missing /usr/sbin/chroot or /bin/bash in exported root; falling back to initrd ls"
+    ls -la /mnt/9 || true
+    rc=2
+  fi
+else
+  echo "init: ERROR: mount hostshare failed"
+  rc=2
 fi
 
-# If cpu/scp uploaded an fstab, mount it. (Errors are ok; tests will surface failures.)
-if [ -f /etc/fstab ]; then
-  mkdir -p /mnt/root /mnt/9
-  mount -a || true
+repo="/mnt/9/home/v9fs-test/test"
+if [ -d "$repo" ]; then
+  mkdir -p "$repo/logs" || true
+  echo "${rc:-2}" >"$repo/logs/guest.exitcode" || true
+  echo "init: tests=${tests} rc=${rc:-2}" >"$repo/logs/guest.log" || true
 fi
 
-mkdir -p /home/v9fs-test/.ssh
-chmod 700 /home/v9fs-test/.ssh
-mkdir -p /root/.ssh
-chmod 700 /root/.ssh
+sync || true
+echo "init: requesting poweroff via sysrq"
+echo o >/proc/sysrq-trigger || true
 
-if [ -f /home/v9fs-test/.ssh/authorized_keys ]; then
-  chmod 600 /home/v9fs-test/.ssh/authorized_keys
-fi
-if [ -f /root/.ssh/authorized_keys ]; then
-  chmod 600 /root/.ssh/authorized_keys
-fi
-
-# Start ssh server for the host-side `cpu` helper.
-# Option A: run tests directly in guest (no SSH transport).
-cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
-case "$cmdline" in
-  *v9fs.run=1*)
-    tests="$(echo "$cmdline" | sed -n 's/.*v9fs.tests=\([^ ]*\).*/\1/p')"
-    type="$(echo "$cmdline" | sed -n 's/.*v9fs.type=\([^ ]*\).*/\1/p')"
-    check="$(echo "$cmdline" | sed -n 's/.*v9fs.check=\([^ ]*\).*/\1/p')"
-    ts="$(echo "$cmdline" | sed -n 's/.*v9fs.ts=\([^ ]*\).*/\1/p')"
-    : "${tests:=smoke}"
-    : "${type:=ci}"
-    : "${check:=1}"
-    if [ -n "${ts:-}" ]; then
-      export TIMESTAMP="$ts"
-    fi
-
-    echo "initrd: running guest tests tests=$tests type=$type check=$check"
-    if [ -f /mnt/9/test/scripts/v9fs-guest-run ]; then
-      /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" "$type" "$check" || true
-    else
-      echo "initrd: missing /mnt/9/test/scripts/v9fs-guest-run"
-      ls -la /mnt/9/test/scripts 2>/dev/null || true
-      ls -la /mnt/9/test 2>/dev/null || true
-    fi
-    sync 2>/dev/null || true
-    echo "initrd: powering off"
-    poweroff -f || halt -f || reboot -f
-    ;;
-esac
-
-echo "initrd up; interactive shell"
-exec sh
-EOF
-chmod +x "$work/init"
-
-# Minimal /etc files
-cat >"$work/etc/passwd" <<'EOF'
-root:x:0:0:root:/root:/bin/sh
-EOF
-cat >"$work/etc/group" <<'EOF'
-root:x:0:
-EOF
-
-# Authorized keys for root login (dropbear checks /root/.ssh and /home/<user> too; we use /home/v9fs-test).
-pubkey="$(cat /home/v9fs-test/.ssh/identity.pub)"
-mkdir -p "$work/home/v9fs-test/.ssh"
-printf '%s\n' "$pubkey" >"$work/home/v9fs-test/.ssh/authorized_keys"
-mkdir -p "$work/root/.ssh"
-printf '%s\n' "$pubkey" >"$work/root/.ssh/authorized_keys"
-
-# Pre-generate a host key for dropbear so boot doesn't block on keygen.
-mkdir -p "$work/etc/dropbear"
-if command -v dropbearkey >/dev/null 2>&1; then
-  dropbearkey -t ed25519 -f "$work/etc/dropbear/dropbear_ed25519_host_key" >/dev/null 2>&1 || true
-fi
-
-# Busybox static provides core utils (sh, mount, udhcpc, etc.)
-cp /bin/busybox "$work/bin/busybox"
-for a in sh mount mkdir ln ls cat echo sleep uname ps kill ip udhcpc netstat poweroff halt reboot date awk sed diff cp rm sort; do
-  ln -s /bin/busybox "$work/bin/$a" 2>/dev/null || true
+# Never exit PID1; if poweroff fails, just idle.
+echo "init: poweroff returned; idling"
+while true; do
+  sleep 1 || true
 done
+EOF
+chmod +x "$init"
 
-# Dropbear + keygen (dynamic; copy required libs)
-cp /usr/sbin/dropbear "$work/sbin/dropbear"
-cp /usr/bin/dropbearkey "$work/bin/dropbearkey"
+# Bake the selected test into /init (guest environment has no V9FS_TESTS).
+sed -i "s/__V9FS_TESTS__/${V9FS_TESTS:-smoke}/g" "$init"
 
+# Collect required userland binaries and their shared libs from the container FS.
+mkdir -p "$work/rootfs"
+copy_file() {
+  local src="$1" dst="$2"
+  mkdir -p "$work/rootfs/$(dirname "$dst")"
+  cp -L "$src" "$work/rootfs/$dst"
+}
 copy_libs() {
   local bin="$1"
-  ldd "$bin" | awk '/=> \//{print $3} /^\//{print $1}' | while read -r lib; do
-    mkdir -p "$work/$(dirname "$lib")"
-    cp -L "$lib" "$work/$lib"
+  ldd "$bin" | awk '/=> \//{print $3}; /^\//{print $1}' | while read -r lib; do
+    [ -n "$lib" ] || continue
+    [ -f "$lib" ] || continue
+    copy_file "$lib" "$lib"
   done
 }
-copy_libs /usr/sbin/dropbear
-copy_libs /usr/bin/dropbearkey
 
-# Some environments omit the dynamic loader from `ldd` parsing; ensure it exists.
-if [ -f /lib/ld-linux-aarch64.so.1 ]; then
-  mkdir -p "$work/lib"
-  cp -L /lib/ld-linux-aarch64.so.1 "$work/lib/ld-linux-aarch64.so.1"
-fi
-if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
-  mkdir -p "$work/lib64"
-  cp -L /lib64/ld-linux-x86-64.so.2 "$work/lib64/ld-linux-x86-64.so.2"
-fi
+need_bins=(
+  sh mount ls mkdir sync sleep
+)
+for b in "${need_bins[@]}"; do
+  p="$(command -v "$b" || true)"
+  [ -n "$p" ] || { echo "ERROR: missing $b in image"; exit 2; }
+  copy_file "$p" "/bin/$b"
+  copy_libs "$p"
+done
 
-# Bench/test helpers are executed inside the initrd (from 9p), so the initrd
-# must include their shared library dependencies.
-for b in /usr/bin/dbench /usr/bin/postmark /usr/local/bin/fsx; do
-  if [ -x "$b" ]; then
-    copy_libs "$b"
+# Also ensure dynamic loader exists if not captured above.
+for ldso in /lib/ld-linux-aarch64.so.1 /lib64/ld-linux-aarch64.so.1; do
+  if [ -f "$ldso" ]; then
+    copy_file "$ldso" "$ldso"
   fi
 done
 
-(cd "$work" && find . -print0 | cpio --null -ov --format=newc) >"$out"
+# Overlay our /init onto the base initrd using a tiny Python newc (cpio) rewriter.
+# This avoids needing `cpio`, `busybox`, or a working u-root build toolchain.
+python3 - "$base" "$init" "$work/rootfs" "$out" <<'PY'
+import os, sys, stat, time
 
+base_path, init_path, extra_root, out_path = sys.argv[1:5]
+
+def align4(x: int) -> int:
+    return (x + 3) & ~3
+
+def read_exact(f, n: int) -> bytes:
+    b = f.read(n)
+    if len(b) != n:
+        raise EOFError(f"short read: wanted {n}, got {len(b)}")
+    return b
+
+def parse_hex(b: bytes) -> int:
+    return int(b.decode("ascii"), 16)
+
+def write_header(w, **fields):
+    # newc header fields are 8 hex bytes each (except magic)
+    parts = [
+        b"070701",
+        f"{fields['ino']:08x}".encode(),
+        f"{fields['mode']:08x}".encode(),
+        f"{fields['uid']:08x}".encode(),
+        f"{fields['gid']:08x}".encode(),
+        f"{fields['nlink']:08x}".encode(),
+        f"{fields['mtime']:08x}".encode(),
+        f"{fields['filesize']:08x}".encode(),
+        f"{fields['devmajor']:08x}".encode(),
+        f"{fields['devminor']:08x}".encode(),
+        f"{fields['rdevmajor']:08x}".encode(),
+        f"{fields['rdevminor']:08x}".encode(),
+        f"{fields['namesize']:08x}".encode(),
+        f"{fields['check']:08x}".encode(),
+    ]
+    w.write(b"".join(parts))
+
+def iter_newc_entries(f):
+    while True:
+        try:
+            hdr = read_exact(f, 110)
+        except EOFError:
+            # Some initrds may omit a TRAILER!!! record and just end.
+            break
+        if hdr[:6] != b"070701":
+            raise ValueError(f"bad magic: {hdr[:6]!r}")
+
+        ino = parse_hex(hdr[6:14])
+        mode = parse_hex(hdr[14:22])
+        uid = parse_hex(hdr[22:30])
+        gid = parse_hex(hdr[30:38])
+        nlink = parse_hex(hdr[38:46])
+        mtime = parse_hex(hdr[46:54])
+        filesize = parse_hex(hdr[54:62])
+        devmajor = parse_hex(hdr[62:70])
+        devminor = parse_hex(hdr[70:78])
+        rdevmajor = parse_hex(hdr[78:86])
+        rdevminor = parse_hex(hdr[86:94])
+        namesize = parse_hex(hdr[94:102])
+        check = parse_hex(hdr[102:110])
+
+        name = read_exact(f, namesize)
+        # name includes trailing NUL
+        if not name.endswith(b"\x00"):
+            raise ValueError("name missing NUL terminator")
+        name_str = name[:-1].decode("utf-8", "replace")
+
+        # pad after name to 4-byte boundary from start of header
+        pad = align4(110 + namesize) - (110 + namesize)
+        if pad:
+            read_exact(f, pad)
+
+        data = read_exact(f, filesize) if filesize else b""
+        pad = align4(filesize) - filesize
+        if pad:
+            read_exact(f, pad)
+
+        yield {
+            "ino": ino, "mode": mode, "uid": uid, "gid": gid, "nlink": nlink, "mtime": mtime,
+            "filesize": filesize, "devmajor": devmajor, "devminor": devminor,
+            "rdevmajor": rdevmajor, "rdevminor": rdevminor, "namesize": namesize, "check": check,
+            "name": name_str, "data": data,
+        }
+
+        if name_str == "TRAILER!!!":
+            break
+
+def write_entry(w, name: str, mode: int, uid: int, gid: int, data: bytes):
+    if not name.endswith("\x00"):
+        name_bytes = name.encode("utf-8") + b"\x00"
+    else:
+        name_bytes = name.encode("utf-8")
+    namesize = len(name_bytes)
+    write_header(
+        w,
+        ino=0,
+        mode=mode,
+        uid=uid,
+        gid=gid,
+        nlink=1,
+        mtime=int(time.time()),
+        filesize=len(data),
+        devmajor=0, devminor=0, rdevmajor=0, rdevminor=0,
+        namesize=namesize,
+        check=0,
+    )
+    w.write(name_bytes)
+    # pad to 4-byte boundary after name
+    pad = align4(110 + namesize) - (110 + namesize)
+    if pad:
+        w.write(b"\x00" * pad)
+    if data:
+        w.write(data)
+        pad = align4(len(data)) - len(data)
+        if pad:
+            w.write(b"\x00" * pad)
+
+def write_symlink(w, name: str, target: str, uid: int = 0, gid: int = 0):
+    mode = stat.S_IFLNK | 0o777
+    write_entry(w, name, mode, uid, gid, target.encode("utf-8"))
+
+def write_dir(w, name: str, mode: int = 0o755, uid: int = 0, gid: int = 0):
+    write_entry(w, name, stat.S_IFDIR | mode, uid, gid, b"")
+
+def main():
+    init_data = open(init_path, "rb").read()
+    init_mode = stat.S_IFREG | 0o755
+
+    extras = {}  # path -> (mode, data)
+    for root, _, files in os.walk(extra_root):
+        for fn in files:
+            src = os.path.join(root, fn)
+            rel = os.path.relpath(src, extra_root)
+            rel = rel.lstrip("./")
+            st = os.lstat(src)
+            if stat.S_ISLNK(st.st_mode):
+                tgt = os.readlink(src).encode("utf-8")
+                extras[rel] = (stat.S_IFLNK | 0o777, tgt)
+            elif stat.S_ISREG(st.st_mode):
+                extras[rel] = (stat.S_IFREG | (st.st_mode & 0o777), open(src, "rb").read())
+
+    replaced_init = False
+    replace_names = set(extras.keys())
+    replace_names.add("init")
+
+    tmp_out = out_path + ".tmp"
+    with open(base_path, "rb") as rf, open(tmp_out, "wb") as wf:
+        for ent in iter_newc_entries(rf):
+            name = ent["name"]
+            if name == "TRAILER!!!":
+                break
+            # If we are replacing this path, skip the base entry so we don't
+            # rely on the kernel's behavior for duplicate cpio entries.
+            norm = name.lstrip("/")
+            if norm in replace_names:
+                continue
+            write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
+
+        if not replaced_init:
+            write_entry(wf, "init", init_mode, 0, 0, init_data)
+
+        # Add extra binaries/libs (and overwrite if absent in base).
+        # Ensure parent directories exist in the archive.
+        dirs = set()
+        for p in extras.keys():
+            parts = p.split("/")
+            for i in range(1, len(parts)):
+                d = "/".join(parts[:i])
+                if d:
+                    dirs.add(d)
+        for d in sorted(dirs, key=lambda s: (s.count("/"), s)):
+            write_dir(wf, d)
+
+        for path, (mode, data) in extras.items():
+            write_entry(wf, path, mode, 0, 0, data)
+
+        # trailer
+        write_entry(wf, "TRAILER!!!", stat.S_IFREG | 0o644, 0, 0, b"")
+
+    os.replace(tmp_out, out_path)
+    os.chmod(out_path, 0o644)
+
+if __name__ == "__main__":
+    main()
+PY
 echo "Wrote initrd to $out"
 

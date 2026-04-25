@@ -1,60 +1,88 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-tests="${1:-short}"
-type="${2:-ci}"
-check="${3:-1}"
+tests="${1:-smoke}"
 
 # Ensure artifacts created by root inside Docker are readable by the
 # GitHub Actions runner user when uploading `logs/` as an artifact.
 umask 022
-
-# Default to the container-provided tools exposed to the guest via 9p.
-export TESTBIN="${TESTBIN:-/home/v9fs-test/testbin}"
 
 export TIMESTAMP="${TIMESTAMP:-$(date +%s)}"
 mkdir -p "logs/${TIMESTAMP}"
 export QEMULOG="logs/${TIMESTAMP}/qemu.log"
 export PIDFILE="/home/v9fs-test/qemu.pid"
 
-# Build a stable export root so 9p sees our bind mounts.
-mkdir -p /workspaces/share
-mkdir -p /workspaces/share/test /workspaces/share/tmp /workspaces/share/kernel /workspaces/share/testbin
-mountpoint -q /workspaces/share/test || mount --bind /home/v9fs-test/test /workspaces/share/test
-mountpoint -q /workspaces/share/tmp || mount --bind /workspaces/tmp /workspaces/share/tmp
-mountpoint -q /workspaces/share/kernel || mount --bind /workspaces/kernel /workspaces/share/kernel
-mountpoint -q /workspaces/share/testbin || mount --bind /home/v9fs-test/testbin /workspaces/share/testbin
+# Export the whole container root over 9p.
+export FSDEV_PATH="/"
+export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
-export FSDEV_PATH="/workspaces/share"
+# Prepare benchmark binaries when requested.
+case "${tests}" in
+  smoke) ;;
+  fsx|postmark|dbench)
+    ./scripts/v9fs-prepare-benchmarks
+    ;;
+  diod-regression)
+    ./scripts/v9fs-prepare-diod-regression
+    ;;
+  *)
+    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench|diod-regression)"
+    exit 2
+    ;;
+esac
 
-# Run the suite inside the guest and poweroff when complete.
-export EXTRA_APPEND="v9fs.run=1 v9fs.tests=${tests} v9fs.type=${type} v9fs.check=${check} v9fs.ts=${TIMESTAMP}"
+# Tell v9fs-build-initrd which test to bake in.
+export V9FS_TESTS="${tests}"
+
+# Patch the image-provided initrd so u-root runs our `/bin/uinit`.
+export INITRD="${INITRD:-/opt/v9fs/initrd.patched.cpio}"
+./scripts/v9fs-build-initrd "${INITRD}"
+
+# Pass timestamp so uinit writes guest.exitcode into logs/<ts>/.
+export EXTRA_APPEND="v9fs.ts=${TIMESTAMP} v9fs.tests=${tests}"
+
+# Run QEMU daemonized, but stream qemu.log into docker logs.
+export QEMU_DAEMONIZE=1
+export QEMU_STREAM_LOG=0
 
 /home/v9fs-test/test/qemu.bash
 
-# Wait for QEMU to exit (guest powers off).
-if [ -f "${PIDFILE}" ]; then
-  pid="$(cat "${PIDFILE}")"
-  while kill -0 "${pid}" 2>/dev/null; do
-    sleep 1
-  done
+# Stream guest serial log into the docker log while we proceed.
+tail_pid=""
+if [ -f "${QEMULOG}" ]; then
+  tail -n +1 -F "${QEMULOG}" &
+  tail_pid="$!"
 fi
 
-echo "QEMU run complete; logs at ${QEMULOG}"
+# Wait for QEMU to exit (guest should power off).
+if [ -f "${PIDFILE}" ]; then
+  pid="$(cat "${PIDFILE}")"
+  for _ in $(seq 1 120); do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 1
+  done
+  kill -0 "${pid}" 2>/dev/null && echo "WARNING: QEMU still running; killing" && kill "${pid}" 2>/dev/null || true
+fi
 
-# Make logs readable for artifact upload on the host runner.
+if [ -n "${tail_pid}" ]; then
+  kill "${tail_pid}" 2>/dev/null || true
+fi
+
 chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 
-# The guest writes a status marker into the shared logs directory.
-# Use it to fail CI while still running the whole suite.
 guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
-for _ in 1 2 3 4 5; do
-  [ -f "${guest_rc_file}" ] && break
-  sleep 1
-done
+guest_rc_src="logs/guest.exitcode"
+guest_log_src="logs/guest.log"
+
+if [ -f "${guest_rc_src}" ]; then
+  cp -f "${guest_rc_src}" "${guest_rc_file}" 2>/dev/null || true
+fi
+if [ -f "${guest_log_src}" ]; then
+  cp -f "${guest_log_src}" "logs/${TIMESTAMP}/guest.log" 2>/dev/null || true
+fi
 
 if [ ! -f "${guest_rc_file}" ]; then
-  echo "WARNING: missing ${guest_rc_file}; treating as failure"
+  echo "WARNING: missing ${guest_rc_file} (and ${guest_rc_src}); treating as failure"
   exit 2
 fi
 
@@ -63,4 +91,6 @@ if [ "${guest_rc}" != "0" ]; then
   echo "Guest reported failures (rc=${guest_rc})"
   exit "${guest_rc}"
 fi
+
+echo "OK: guest rc=0 (logs at logs/${TIMESTAMP}/)"
 
