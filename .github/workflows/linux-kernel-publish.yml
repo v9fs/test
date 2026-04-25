@@ -28,7 +28,7 @@ jobs:
   publish:
     runs-on: ubuntu-24.04-arm
     env:
-      V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:2.0.0
+      V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:latest
     steps:
       - name: Checkout harness (scripts)
         uses: actions/checkout@v4

@@ -21,7 +21,7 @@ This repo now contains a **minimal 9p client smoke test harness**:
 1. Build the image:
 
 ```bash
-docker pull ghcr.io/v9fs/docker:2.0.0
+docker pull ghcr.io/v9fs/docker:latest
 ```
 
 1. Put a kernel `Image` at `./kernel/.build/arch/arm64/boot/Image`

@@ -19,7 +19,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
-      V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:2.0.0
+      V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:latest
     steps:
       - name: Checkout harness
         uses: actions/checkout@v4

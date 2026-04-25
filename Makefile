@@ -1,6 +1,6 @@
 .PHONY: docker-smoke
 
-IMAGE ?= ghcr.io/v9fs/docker:2.0.0
+IMAGE ?= ghcr.io/v9fs/docker:latest
 KERNEL_RELEASE ?= kernel-main
 
 docker-smoke:
