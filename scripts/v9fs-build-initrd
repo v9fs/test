@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out="${1:-/home/v9fs-test/initrd.cpio}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+mkdir -p "$work"/{bin,sbin,etc,proc,sys,dev,run,tmp,mnt/9}
+
+cat >"$work/init" <<'EOF'
+#!/bin/sh
+set -eu
+
+export PATH=/bin:/sbin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev || true
+
+mkdir -p /run /tmp /mnt/9
+
+# Mount hostshare (virtio-9p) exported by QEMU.
+if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+  echo "initrd: ERROR: failed to mount hostshare on /mnt/9"
+fi
+
+cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
+case "$cmdline" in
+  *v9fs.run=1*)
+    tests="$(echo "$cmdline" | sed -n 's/.*v9fs.tests=\\([^ ]*\\).*/\\1/p')"
+    ts="$(echo "$cmdline" | sed -n 's/.*v9fs.ts=\\([^ ]*\\).*/\\1/p')"
+    : "${tests:=smoke}"
+    if [ -n "${ts:-}" ]; then
+      export TIMESTAMP="$ts"
+    fi
+
+    echo "initrd: running guest tests tests=$tests ts=${TIMESTAMP:-unset}"
+    if [ -x /mnt/9/test/scripts/v9fs-guest-run ]; then
+      /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" || true
+    else
+      echo "initrd: missing /mnt/9/test/scripts/v9fs-guest-run"
+      ls -la /mnt/9/test/scripts 2>/dev/null || true
+    fi
+    sync 2>/dev/null || true
+    poweroff -f || halt -f || reboot -f
+    ;;
+esac
+
+echo "initrd up; interactive shell"
+exec sh
+EOF
+chmod +x "$work/init"
+
+cat >"$work/etc/passwd" <<'EOF'
+root:x:0:0:root:/root:/bin/sh
+EOF
+cat >"$work/etc/group" <<'EOF'
+root:x:0:
+EOF
+
+cp /bin/busybox "$work/bin/busybox"
+for a in sh mount mkdir ln ls cat echo sleep uname ps kill date sed rm sync poweroff halt reboot; do
+  ln -s /bin/busybox "$work/bin/$a" 2>/dev/null || true
+done
+
+(cd "$work" && find . -print0 | cpio --null -ov --format=newc) >"$out"
+echo "Wrote initrd to $out"
+

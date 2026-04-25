@@ -1,0 +1,77 @@
+name: Harness CI
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      kernel_release:
+        description: 'Release tag that provides arm64 Image (default: kernel-main)'
+        required: true
+        default: 'kernel-main'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04-arm
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Download published kernel Image
+        run: |
+          set -euo pipefail
+          mkdir -p kernel/.build/arch/arm64/boot
+          gh release download "${KERNEL_RELEASE}" -p Image -D kernel/.build/arch/arm64/boot --clobber
+          ls -la kernel/.build/arch/arm64/boot/Image
+
+      - name: Build Docker environment
+        run: docker build -t v9fs-test-env:local .
+
+      - name: Run smoke test (guest-direct)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp"
+          docker run --rm --privileged \
+            -e KERNELBUILD=/workspaces/kernel/.build \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            v9fs-test-env:local \
+            bash -lc "v9fs-run-tests smoke"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "==== logs tree ===="
+          (ls -R logs || true)
+          echo "==== qemu.log (tail) ===="
+          for f in logs/*/qemu.log; do
+            echo "---- $f ----"
+            tail -n 250 "$f" || true
+          done
+          echo "==== guest.log (tail) ===="
+          for f in logs/*/guest.log; do
+            echo "---- $f ----"
+            tail -n 250 "$f" || true
+          done
+
+      - name: Fix log permissions (for artifact upload)
+        if: always()
+        run: |
+          sudo chmod -R a+rX logs || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: logs
+          retention-days: 7
+

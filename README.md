@@ -7,6 +7,33 @@ The previous implementation snapshot is preserved at:
 - Git tag: `rework-take-1`
 - Directory: `old/rework-take-1/`
 
+## Current rebuild (take 2)
+
+This repo now contains a **minimal 9p client smoke test harness**:
+
+- QEMU runs an **arm64** Linux kernel `Image`
+- QEMU exports a host directory via **virtio-9p**
+- An initrd runs the smoke test **inside the guest** (no SSH)
+- The test exercises basic filesystem operations on the 9p mount
+
+### Local smoke run (Docker + QEMU)
+
+1) Build the image:
+
+```bash
+make docker-build
+```
+
+2) Put a kernel `Image` at `./kernel/.build/arch/arm64/boot/Image`
+
+3) Run the smoke test:
+
+```bash
+make docker-smoke
+```
+
+Logs land under `./logs/<timestamp>/` (QEMU serial is `qemu.log`; guest writes `guest.log` + `guest.exitcode`).
+
 # v9fs test harness
 
 This repository contains **test code and scripts** for exercising the Linux **9p (v9fs)** filesystem.

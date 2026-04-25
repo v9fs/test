@@ -1,6 +1,8 @@
 ## TODO
 
-- Rebuild the harness from scratch (see `old/rework-take-1/` for reference).
+- Extend smoke test into a small suite (create/rename/unlink, fsync, directory traversal, large file IO).
+- Decide whether to adopt a u-root/u-root+cpu initramfs for richer tooling distribution.
+- Wire `v9fs/linux` to trigger `repository_dispatch` into `linux-kernel-publish.yml`.
 
 ## TODO
 

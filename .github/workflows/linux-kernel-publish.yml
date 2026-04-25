@@ -1,0 +1,68 @@
+name: Publish Linux kernel (arm64 Image)
+
+on:
+  repository_dispatch:
+    types: [publish-kernel-image]
+  workflow_dispatch:
+    inputs:
+      linux_repository:
+        description: 'Kernel GitHub repository (owner/name)'
+        required: true
+        default: 'v9fs/linux'
+        type: string
+      linux_ref:
+        description: 'Git ref to build (branch, tag, or SHA)'
+        required: true
+        default: 'main'
+        type: string
+      release_tag:
+        description: 'Release tag to publish/update (kernel-main, kernel-nightly, kernel-<version>)'
+        required: true
+        default: 'kernel-main'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout harness (Dockerfile + scripts)
+        uses: actions/checkout@v4
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.linux_repository || github.event.client_payload.linux_repository || 'v9fs/linux' }}
+          ref: ${{ inputs.linux_ref || github.event.client_payload.linux_ref || 'main' }}
+          path: linux
+
+      - name: Build Docker environment
+        run: docker build -t v9fs-test-env:local .
+
+      - name: Build kernel (arm64 Image)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp" "$GITHUB_WORKSPACE/kernel"
+          docker run --rm --privileged \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            v9fs-test-env:local \
+            bash -lc 'set -euo pipefail; mkdir -p /workspaces/linux/.build; if [ ! -f /workspaces/linux/.build/.config ]; then make -C /workspaces/linux O=/workspaces/linux/.build defconfig; fi; make -C /workspaces/linux O=/workspaces/linux/.build -j\"$(nproc)\"; mkdir -p /workspaces/kernel/.build/arch/arm64/boot; cp -f /workspaces/linux/.build/arch/arm64/boot/Image /workspaces/kernel/.build/arch/arm64/boot/Image'
+
+      - name: Publish Image as release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.release_tag || github.event.client_payload.release_tag || 'kernel-main' }}
+        run: |
+          set -euo pipefail
+          img="kernel/.build/arch/arm64/boot/Image"
+          test -f "$img"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --notes "Automated arm64 kernel Image." --prerelease
+          cp -f "$img" Image
+          gh release upload "$TAG" Image --clobber
+
