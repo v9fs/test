@@ -26,6 +26,9 @@ Tweak freely.
 
 - Primary local dev is **macOS via Docker + QEMU**.
 - Prefer solutions that work on Docker Desktop (no reliance on KVM).
+- After any manual experiment that uses `docker run`, ensure containers are not left running:
+  - Prefer `docker run --rm` plus a project label `v9fs.harness=v9fs-test`.
+  - If you suspect a hung run left containers behind, clean up with `make docker-clean` or `./scripts/v9fs-docker-clean`.
 
 ## CI architecture preferences
 - Use http://github.com/v9fs/docker published base image instead of building custom docker for kernel build and/or test frameworks

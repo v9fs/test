@@ -54,6 +54,34 @@ if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; th
       dbench)
         /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/dbench; /workspaces/tmp/testbin/dbench/dbench -t 30 -c /workspaces/tmp/testbin/dbench/client.txt -D /workspaces/tmpdir/dbench 16' || rc=$?
         ;;
+      diod-regression)
+        # Run a subset of diod's kernel-client regression tests (sharness) inside the guest.
+        # Build artifacts are prepared on the host side under /workspaces/tmp/diod-build.
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
+          set -e
+          build="$(cat /workspaces/tmp/diod-build.LATEST 2>/dev/null || true)"
+          if [ -z "$build" ]; then
+            build="$(ls -d /workspaces/tmp/diod-build-* 2>/dev/null | sort | tail -n 1 || true)"
+          fi
+          [ -n "$build" ] || { echo "diod-regression: missing diod build dir"; exit 2; }
+          cd "$build"
+          # The sharness tests expect helper binaries from src/cmd check_PROGRAMS.
+          make -C src/cmd test_diodrun test_flock test_flock_single test_atomic_create test_pathwalk
+
+          # These are the kernel v9fs client oriented tests.
+          timeout 15m make -C t check TESTS="\
+            t0010-v9fs-runasuser.t \
+            t0011-v9fs-allsquash.t \
+            t0012-v9fs-multiuser.t \
+            t0013-v9fs-acl.t \
+            t0020-dbench.t \
+            t0021-postmark.t \
+          "
+
+          # Preserve the automake/sharness combined log in the harness logs dir.
+          cp -f "$build/t/test-suite.log" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
+        ' || rc=$?
+        ;;
       *)
         echo "init: ERROR: unknown tests=${tests}"
         rc=2

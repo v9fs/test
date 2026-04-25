@@ -22,8 +22,11 @@ case "${tests}" in
   fsx|postmark|dbench)
     ./scripts/v9fs-prepare-benchmarks
     ;;
+  diod-regression)
+    ./scripts/v9fs-prepare-diod-regression
+    ;;
   *)
-    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench)"
+    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench|diod-regression)"
     exit 2
     ;;
 esac

@@ -24,6 +24,7 @@ jobs:
           - fsx
           - postmark
           - dbench
+          - diod-regression
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
@@ -43,6 +44,8 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/tmp"
           docker run --rm --privileged \
+                    --name "v9fs-test.${{ matrix.test }}.${{ github.run_id }}.${{ github.run_attempt }}" \
+                    --label v9fs.harness=v9fs-test \
             --user 0:0 \
             -e KERNELBUILD=/workspaces/kernel/.build \
             -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \

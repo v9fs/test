@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/v9fs-docker-clean [--aggressive]
+
+Default: remove containers labeled v9fs.harness=v9fs-test.
+Aggressive: additionally remove any container that has this repo bind-mounted.
+Always captures docker logs + inspect before removing.
+EOF
+}
+
+aggressive=0
+case "${1:-}" in
+  "" ) ;;
+  --aggressive) aggressive=1 ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
+esac
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+label="v9fs.harness=v9fs-test"
+ts="$(date +%s)"
+outdir="${repo_root}/logs/docker/clean-${ts}"
+mkdir -p "${outdir}"
+
+capture_and_remove() {
+  local id="$1"
+  local name
+  name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null | sed 's#^/##' || true)"
+  [ -n "$name" ] || name="$id"
+
+  docker logs "$id" >"${outdir}/${name}.log" 2>&1 || true
+  docker inspect "$id" >"${outdir}/${name}.inspect.json" 2>&1 || true
+  docker rm -f "$id" >/dev/null 2>&1 || true
+}
+
+ids=()
+
+# 1) Labeled containers (always).
+while IFS= read -r id; do
+  [ -n "$id" ] && ids+=("$id")
+done < <(docker ps -aq --filter "label=${label}" || true)
+
+# 2) Aggressive: any container with the repo bind-mounted.
+if [ "${aggressive}" = "1" ]; then
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    # Matches containers mounting the repo path anywhere.
+    if docker inspect -f '{{range .Mounts}}{{println .Source}}{{end}}' "$id" 2>/dev/null | /usr/bin/grep -Fqx "${repo_root}"; then
+      ids+=("$id")
+    fi
+  done < <(docker ps -aq || true)
+fi
+
+# De-dupe.
+uniq_ids=()
+seen=" "
+for id in "${ids[@]}"; do
+  case "$seen" in
+    *" $id "*) continue ;;
+    *) seen="${seen}${id} "; uniq_ids+=("$id") ;;
+  esac
+done
+
+if [ "${#uniq_ids[@]}" -eq 0 ]; then
+  echo "No containers to clean (label=${label}${aggressive:+ or mount=${repo_root}})"
+  exit 0
+fi
+
+echo "Capturing logs+inspect to ${outdir}"
+echo "Removing ${#uniq_ids[@]} container(s): ${uniq_ids[*]}"
+for id in "${uniq_ids[@]}"; do
+  capture_and_remove "$id"
+done
+
+echo "Done."
+
