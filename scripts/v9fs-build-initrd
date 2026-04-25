@@ -19,36 +19,54 @@ set -eu
 
 mkdir -p /run /tmp /mnt/9
 
-# `v9fs/docker` initrd is u-root based. We install this script as `/bin/uinit`,
-# which u-root init executes automatically.
-if ! mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
-  echo "uinit: ERROR: failed to mount hostshare on /mnt/9"
+bb="/bbin/bb"
+
+say() {
+  # best-effort: also mirror to kernel log if console is weird
+  echo "$@" || true
+  [ -c /dev/kmsg ] && echo "$@" >/dev/kmsg 2>/dev/null || true
+}
+
+cmdline="$(</proc/cmdline 2>/dev/null || true)"
+run=0
+tests="smoke"
+ts=""
+for w in $cmdline; do
+  case "$w" in
+    v9fs.run=1) run=1 ;;
+    v9fs.tests=*) tests="${w#v9fs.tests=}" ;;
+    v9fs.ts=*) ts="${w#v9fs.ts=}" ;;
+  esac
+done
+
+if [ "$run" != "1" ]; then
+  say "uinit: v9fs.run not set; powering off"
+  "$bb" poweroff -f || "$bb" halt -f || "$bb" reboot -f
+  exit 0
 fi
 
-cmdline="$(cat /proc/cmdline 2>/dev/null || true)"
-case "$cmdline" in
-  *v9fs.run=1*)
-    tests="$(printf %s "$cmdline" | sed -n 's/.*v9fs.tests=\\([^ ]*\\).*/\\1/p')"
-    ts="$(printf %s "$cmdline" | sed -n 's/.*v9fs.ts=\\([^ ]*\\).*/\\1/p')"
-    : "${tests:=smoke}"
-    if [ -n "${ts:-}" ]; then
-      export TIMESTAMP="$ts"
-    fi
+if [ -n "${ts:-}" ]; then
+  export TIMESTAMP="$ts"
+fi
 
-    echo "uinit: running guest tests tests=$tests ts=${TIMESTAMP:-unset}"
-    if [ -x /mnt/9/test/scripts/v9fs-guest-run ]; then
-      /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" || true
-    else
-      echo "uinit: missing /mnt/9/test/scripts/v9fs-guest-run"
-      ls -la /mnt/9/test/scripts 2>/dev/null || true
-    fi
-    sync 2>/dev/null || true
-    poweroff -f || halt -f || reboot -f
-    ;;
-esac
+say "uinit: starting tests=$tests ts=${TIMESTAMP:-unset}"
 
-echo "uinit: interactive shell"
-exec sh
+if ! "$bb" mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+  say "uinit: ERROR: failed to mount hostshare on /mnt/9"
+  "$bb" sync 2>/dev/null || true
+  "$bb" poweroff -f || "$bb" halt -f || "$bb" reboot -f
+  exit 1
+fi
+
+if [ -x /mnt/9/test/scripts/v9fs-guest-run ]; then
+  /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" || true
+else
+  say "uinit: missing /mnt/9/test/scripts/v9fs-guest-run"
+  "$bb" ls -la /mnt/9/test/scripts 2>/dev/null || true
+fi
+
+"$bb" sync 2>/dev/null || true
+"$bb" poweroff -f || "$bb" halt -f || "$bb" reboot -f
 EOF
 chmod +x "$uinit"
 
