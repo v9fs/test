@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure diod server binary is available inside the chrooted container FS.
+# Installs from distro packages (fast) rather than building from source.
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends diod
+
+command -v diod >/dev/null 2>&1 || { echo "ERROR: diod not found after install"; exit 2; }
+diod --help >/dev/null 2>&1 || true
+
+echo "Prepared diod server: $(command -v diod)"
+

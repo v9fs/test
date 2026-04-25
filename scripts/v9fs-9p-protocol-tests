@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+server="${1:-}"
+dialect="${2:-}"
+
+if [ -z "${server}" ] || [ -z "${dialect}" ]; then
+  echo "usage: $0 <qemu|diod> <9p2000|9p2000.u|9p2000.L>" >&2
+  exit 2
+fi
+
+echo "9p-proto: server=${server} dialect=${dialect}"
+
+# Kernel config probe (preferred source of truth when available).
+if [ -r /proc/config.gz ]; then
+  echo "== kernel config (from /proc/config.gz) =="
+  cfg_out="/home/v9fs-test/test/logs/9p-kconfig.txt"
+  mkdir -p "$(dirname "$cfg_out")"
+  (zcat /proc/config.gz 2>/dev/null || gzip -dc /proc/config.gz 2>/dev/null || cat /proc/config.gz) \
+    | /usr/bin/grep -E '^(CONFIG_(NET_9P|9P|P9|VIRTIO_9P|NET_9P_VIRTIO|NET_9P_DEBUG|NET_9P_RDMA|NET_9P_XEN)|# CONFIG_(NET_9P|NET_9P_VIRTIO|NET_9P_RDMA) is not set)' \
+    | sort -u \
+    | tee "$cfg_out" || true
+else
+  echo "== kernel config =="
+  echo "SKIP: /proc/config.gz not present/readable"
+fi
+
+mnt="/workspaces/tmpdir/9p-mnt"
+umount_mnt() { umount -l "$mnt" 2>/dev/null || true; }
+trap umount_mnt EXIT
+umount_mnt
+mkdir -p "$mnt"
+
+case "$server" in
+  qemu)
+    # We are already running inside a chroot that is the virtio-9p mount,
+    # mounted with the requested dialect by init. Use an on-mount directory.
+    exp="/workspaces/tmpdir/9p-exp-qemu"
+    mkdir -p "$exp"
+    cli="$exp"
+    ;;
+  diod)
+    # Run diod in the guest and mount it via tcp. Backing store is tmpfs so the
+    # diod tests do not recurse through the QEMU 9p server.
+    exp="/workspaces/tmpdir/9p-exp-diod"
+    sockdir="/workspaces/tmpdir"
+    mkdir -p "$exp"
+    mount -t tmpfs -o mode=0777 tmpfs "$exp" 2>/dev/null || true
+
+    port="${DIOD_PORT:-45670}"
+    diod_log="/home/v9fs-test/test/logs/diod-server.log"
+
+    # Ensure loopback is up for trans=tcp mounts.
+    (ip link set lo up 2>/dev/null || true)
+    (ip addr add 127.0.0.1/8 dev lo 2>/dev/null || true)
+    (ifconfig lo 127.0.0.1 up 2>/dev/null || true)
+
+    # Best-effort: load 9p network transport support if modular.
+    (modprobe 9pnet 2>/dev/null || true)
+    (modprobe 9pnet_fd 2>/dev/null || true)
+    (modprobe 9pnet_virtio 2>/dev/null || true)
+
+    (diod --foreground --listen "127.0.0.1:${port}" \
+      --config-file=/dev/null --debug=0x1 \
+      --runas-uid 0 --no-auth --export "$exp" \
+      >/dev/null 2>>"$diod_log") &
+    diod_pid="$!"
+    echo "9p-proto: started diod pid=${diod_pid} port=${port} export=${exp}"
+
+    for _ in $(seq 1 50); do
+      (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1 && break
+      sleep 0.1
+    done
+
+    if ! mount -t 9p -o "trans=tcp,version=${dialect},port=${port},uname=root,access=any" 127.0.0.1 "$mnt"; then
+      echo "9p-proto: mount failed, dmesg tail:"
+      dmesg | tail -n 200 || true
+      exit 32
+    fi
+    cli="$mnt"
+    ;;
+  *)
+    echo "9p-proto: unknown server=${server} (expected qemu|diod)" >&2
+    exit 2
+    ;;
+esac
+
+echo "9p-proto: exp=${exp}"
+echo "9p-proto: cli=${cli}"
+
+rm -rf "$exp"/tcase 2>/dev/null || true
+rm -rf "$cli"/tcase 2>/dev/null || true
+mkdir -p "$exp/tcase"
+mkdir -p "$cli/tcase"
+
+stat_min() { stat -c "mode=%f owner=%u:%g size=%s links=%h mtime=%Y" "$1"; }
+
+fail() { echo "FAIL: $*"; exit 1; }
+assert_eq() { [ "$1" = "$2" ] || fail "expected '$1' == '$2'"; }
+
+echo "== create/read/write =="
+echo hello >"$cli/tcase/a"
+assert_eq "$(cat "$exp/tcase/a")" "hello"
+dd if=/dev/zero of="$cli/tcase/b" bs=4096 count=32 conv=fsync status=noxfer
+cmp "$cli/tcase/b" "$exp/tcase/b"
+
+echo "== rename within dir + across dirs =="
+mv "$cli/tcase/a" "$cli/tcase/a2"
+mkdir -p "$cli/tcase/dir2"
+mv "$cli/tcase/a2" "$cli/tcase/dir2/a"
+test -f "$exp/tcase/dir2/a"
+
+echo "== symlink + readlink =="
+ln -s "dir2/a" "$cli/tcase/syma"
+assert_eq "$(readlink "$exp/tcase/syma")" "dir2/a"
+
+echo "== hardlink =="
+ln "$cli/tcase/dir2/a" "$cli/tcase/a_hard"
+assert_eq "$(stat -c %h "$exp/tcase/dir2/a")" "$(stat -c %h "$exp/tcase/a_hard")"
+
+echo "== chmod propagation =="
+chmod 640 "$cli/tcase/dir2/a"
+assert_eq "$(stat -c %a "$exp/tcase/dir2/a")" "640"
+chmod 600 "$exp/tcase/dir2/a"
+assert_eq "$(stat -c %a "$cli/tcase/dir2/a")" "600"
+
+echo "== chown/chgrp (best-effort) =="
+if chown 0:0 "$cli/tcase/dir2/a" 2>/dev/null; then
+  assert_eq "$(stat -c %u:%g "$exp/tcase/dir2/a")" "0:0"
+else
+  echo "SKIP: chown not permitted"
+fi
+
+echo "== utimensat/timestamps (best-effort) =="
+if touch -m -t 202001010101.01 "$cli/tcase/dir2/a" 2>/dev/null; then
+  mt_cli="$(stat -c %Y "$cli/tcase/dir2/a")"
+  mt_exp="$(stat -c %Y "$exp/tcase/dir2/a")"
+  assert_eq "$mt_cli" "$mt_exp"
+else
+  echo "SKIP: touch -t failed"
+fi
+
+echo "== statfs sanity =="
+stat -f "$mnt" >/dev/null 2>&1 || df "$mnt"
+
+echo "== unlink, rmdir =="
+rm -f "$cli/tcase/b"
+test ! -e "$exp/tcase/b"
+rmdir "$cli/tcase/dir2" 2>/dev/null || true
+rm -f "$cli/tcase/dir2/a" "$cli/tcase/a_hard" "$cli/tcase/syma" 2>/dev/null || true
+rmdir "$cli/tcase/dir2"
+rmdir "$cli/tcase"
+
+echo "PASS: 9p-proto server=${server} dialect=${dialect}"
+
