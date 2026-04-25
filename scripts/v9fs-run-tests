@@ -48,16 +48,24 @@ fi
 
 echo "Waiting for guest cpud..."
 last_err=""
-for _ in $(seq 1 60); do
-  if out="$("${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 uname -rm 2>&1)"; then
+for i in $(seq 1 60); do
+  # Ensure a stuck connect doesn't hang the harness.
+  # `cpu` can block on 9p mount negotiation; cap total time per probe.
+  if out="$(timeout 5s "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 5s 127.0.0.1 uname -rm 2>&1)"; then
     echo "Guest cpud is up."
+    echo "cpu uname: ${out}"
     break
   fi
   last_err="$out"
+  if [ $((i % 5)) -eq 0 ]; then
+    echo "Still waiting for cpud... (attempt ${i}/60)"
+    echo "Last cpu error:"
+    printf '%s\n' "${last_err}"
+  fi
   sleep 1
 done
 
-if ! "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 uname -rm >/dev/null 2>&1; then
+if ! timeout 5s "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 5s 127.0.0.1 uname -rm >/dev/null 2>&1; then
   echo "ERROR: cpud did not become reachable."
   echo "Last cpu error:"
   printf '%s\n' "${last_err}"
