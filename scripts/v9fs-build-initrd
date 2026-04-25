@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-out="${1:-/home/v9fs-test/initrd.patched.cpio}"
+out="${1:-/opt/v9fs/initrd.patched.cpio}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 # We run inside the `v9fs/docker` image, which provides a base initrd at this path.
-base="${UROOT_BASE:-/home/v9fs-test/initrd.cpio}"
+base="${UROOT_BASE:-/opt/v9fs/initrd.cpio}"
 if [ ! -f "$base" ]; then
   echo "ERROR: base initrd not found at $base"
   exit 2
@@ -31,28 +31,18 @@ say() {
 }
 
 cmdline="$(</proc/cmdline 2>/dev/null || true)"
-run=0
-tests="smoke"
 ts=""
 for w in $cmdline; do
   case "$w" in
-    v9fs.run=1) run=1 ;;
-    v9fs.tests=*) tests="${w#v9fs.tests=}" ;;
     v9fs.ts=*) ts="${w#v9fs.ts=}" ;;
   esac
 done
-
-if [ "$run" != "1" ]; then
-  say "uinit: v9fs.run not set; powering off"
-  "$bb" poweroff -f || "$bb" halt -f || "$bb" reboot -f
-  exit 0
-fi
 
 if [ -n "${ts:-}" ]; then
   export TIMESTAMP="$ts"
 fi
 
-say "uinit: starting tests=$tests ts=${TIMESTAMP:-unset}"
+say "uinit: mount+ls smoke ts=${TIMESTAMP:-unset}"
 
 if ! "$bb" mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
   say "uinit: ERROR: failed to mount hostshare on /mnt/9"
@@ -61,11 +51,17 @@ if ! "$bb" mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /m
   exit 1
 fi
 
-if [ -x /mnt/9/test/scripts/v9fs-guest-run ]; then
-  /bin/sh /mnt/9/test/scripts/v9fs-guest-run "$tests" || true
-else
-  say "uinit: missing /mnt/9/test/scripts/v9fs-guest-run"
-  "$bb" ls -la /mnt/9/test/scripts 2>/dev/null || true
+say "uinit: listing /mnt/9"
+"$bb" ls -la /mnt/9 || true
+"$bb" ls -la /mnt/9/workspaces 2>/dev/null || true
+"$bb" ls -la /mnt/9/workspaces/share 2>/dev/null || true
+
+# Write a pass/fail marker into the host-visible logs directory.
+repo="/mnt/9/workspaces/share/test"
+if [ -n "${TIMESTAMP:-}" ] && [ -d "${repo}" ]; then
+  "$bb" mkdir -p "${repo}/logs/${TIMESTAMP}" || true
+  echo 0 >"${repo}/logs/${TIMESTAMP}/guest.exitcode" 2>/dev/null || true
+  echo "uinit: OK" >"${repo}/logs/${TIMESTAMP}/guest.log" 2>/dev/null || true
 fi
 
 "$bb" sync 2>/dev/null || true

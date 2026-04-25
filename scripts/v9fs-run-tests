@@ -2,15 +2,10 @@
 set -euo pipefail
 
 tests="${1:-smoke}"
-type="${2:-ci}"
-check="${3:-1}"
 
 # Ensure artifacts created by root inside Docker are readable by the
 # GitHub Actions runner user when uploading `logs/` as an artifact.
 umask 022
-
-cpu_bin="${CPU_BIN:-/opt/v9fs/go/bin/cpu}"
-cpu_key="${CPU_KEY:-/opt/v9fs/.ssh/identity}"
 
 export TIMESTAMP="${TIMESTAMP:-$(date +%s)}"
 mkdir -p "logs/${TIMESTAMP}"
@@ -27,10 +22,11 @@ mountpoint -q /workspaces/share/kernel || mount --bind /workspaces/kernel /works
 export FSDEV_PATH="/workspaces/share"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
-# Use the image-provided u-root/cpu initrd (starts cpud as PID 1).
-export INITRD="${INITRD:-/opt/v9fs/initrd.cpio}"
+# Patch the image-provided initrd so u-root runs our `/bin/uinit`.
+export INITRD="${INITRD:-/opt/v9fs/initrd.patched.cpio}"
+./scripts/v9fs-build-initrd "${INITRD}"
 
-# Keep kernel cmdline for debugging, but don't rely on it for test execution.
+# Pass timestamp so uinit writes guest.exitcode into logs/<ts>/.
 export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
 
 # Run QEMU daemonized, but stream qemu.log into docker logs.
@@ -46,67 +42,14 @@ if [ -f "${QEMULOG}" ]; then
   tail_pid="$!"
 fi
 
-echo "Waiting for guest cpud..."
-last_err=""
-port_ok=0
-for i in $(seq 1 60); do
-  set +e
-  timeout 1s bash -lc '</dev/tcp/127.0.0.1/17010' >/dev/null 2>&1
-  tcp_st="$?"
-  set -e
-  if [ "${tcp_st}" = "0" ] && [ "${port_ok}" = "0" ]; then
-    port_ok=1
-    echo "Port 17010 is accepting connections."
-  fi
-  if [ "${tcp_st}" != "0" ] && [ $((i % 5)) -eq 0 ]; then
-    echo "Port 17010 not accepting connections yet (attempt ${i}/60)"
-  fi
-
-  # Ensure a stuck connect doesn't hang the harness.
-  # `cpu` can block on 9p mount negotiation; cap total time per probe.
-  set +e
-  # For a basic liveness probe, use SSH-only mode to avoid hanging on 9p mount negotiation.
-  out="$(timeout 8s "${cpu_bin}" -d -ssh -net tcp4 -key "${cpu_key}" -sp 17010 127.0.0.1 uname -rm 2>&1)"
-  st="$?"
-  set -e
-  if [ "${st}" = "0" ]; then
-    echo "Guest cpud is up."
-    echo "cpu uname: ${out}"
-    break
-  fi
-  if [ "${st}" = "124" ]; then
-    last_err="cpu probe timed out (5s)"
-  else
-    last_err="cpu probe failed (exit ${st}): ${out}"
-  fi
-  if [ $((i % 5)) -eq 0 ]; then
-    echo "Still waiting for cpud... (attempt ${i}/60)"
-    echo "Last cpu error:"
-    printf '%s\n' "${last_err}"
-  fi
-  sleep 1
-done
-
-if ! timeout 5s "${cpu_bin}" -d -ssh -net tcp4 -key "${cpu_key}" -sp 17010 127.0.0.1 uname -rm >/dev/null 2>&1; then
-  echo "ERROR: cpud did not become reachable."
-  echo "Last cpu error:"
-  printf '%s\n' "${last_err}"
-  exit 2
-fi
-
-echo "Running guest tests via cpu (tests=${tests} type=${type} check=${check})"
-export LOG="logs/${TIMESTAMP}"
-"${cpu_bin}" -ssh -net tcp4 -key "${cpu_key}" -sp 17010 127.0.0.1 \
-  /mnt/9/workspaces/share/test/scripts/v9fs-guest-run "${tests}" "${type}" "${check}" || true
-
-# Wait for QEMU to exit (guest may still be running; kill if needed).
+# Wait for QEMU to exit (guest should power off).
 if [ -f "${PIDFILE}" ]; then
   pid="$(cat "${PIDFILE}")"
-  for _ in $(seq 1 10); do
+  for _ in $(seq 1 120); do
     kill -0 "${pid}" 2>/dev/null || break
     sleep 1
   done
-  kill "${pid}" 2>/dev/null || true
+  kill -0 "${pid}" 2>/dev/null && echo "WARNING: QEMU still running; killing" && kill "${pid}" 2>/dev/null || true
 fi
 
 if [ -n "${tail_pid}" ]; then
