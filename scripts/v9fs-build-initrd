@@ -11,6 +11,12 @@ if [ ! -x "$u_root" ]; then
   exit 2
 fi
 
+base="${UROOT_BASE:-/home/v9fs-test/initrd.cpio}"
+if [ ! -f "$base" ]; then
+  echo "ERROR: base initrd not found at $base"
+  exit 2
+fi
+
 init="$work/init"
 cat >"$init" <<'EOF'
 #!/bin/sh
@@ -53,7 +59,7 @@ exec sh
 EOF
 chmod +x "$init"
 
-# Build a minimal initramfs with u-root (bundled busybox + core utilities).
-"$u_root" -o "$out" -initcmd="/init" -files "$init"
+# Overlay our /init onto the base initrd, without building any new Go commands.
+"$u_root" -base "$base" -nocmd -o "$out" -initcmd="/init" -files "$init"
 echo "Wrote initrd to $out"
 
