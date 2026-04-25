@@ -35,6 +35,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/tmp"
           docker run --rm --privileged \
+            --user 0:0 \
             -e KERNELBUILD=/workspaces/kernel/.build \
             -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
             -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \

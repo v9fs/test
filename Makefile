@@ -7,6 +7,7 @@ docker-smoke:
 	mkdir -p ./tmp ./kernel
 	@echo "Place kernel Image at ./kernel/.build/arch/arm64/boot/Image (or download from release $(KERNEL_RELEASE))"
 	docker run --rm --privileged \
+	  --user 0:0 \
 	  -e KERNELBUILD=/workspaces/kernel/.build \
 	  -v "$$(pwd):/home/v9fs-test/test" \
 	  -v "$$(pwd)/kernel:/workspaces/kernel" \
