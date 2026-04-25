@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-out="${1:-/home/v9fs-test/initrd.cpio}"
+out="${1:-/home/v9fs-test/initrd.patched.cpio}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -178,7 +178,8 @@ def main():
     init_mode = stat.S_IFREG | 0o755
 
     replaced = False
-    with open(base_path, "rb") as rf, open(out_path, "wb") as wf:
+    tmp_out = out_path + ".tmp"
+    with open(base_path, "rb") as rf, open(tmp_out, "wb") as wf:
         for ent in iter_newc_entries(rf):
             name = ent["name"]
             if name == "TRAILER!!!":
@@ -196,6 +197,7 @@ def main():
         # trailer
         write_entry(wf, "TRAILER!!!", stat.S_IFREG | 0o644, 0, 0, b"")
 
+    os.replace(tmp_out, out_path)
     os.chmod(out_path, 0o644)
 
 if __name__ == "__main__":

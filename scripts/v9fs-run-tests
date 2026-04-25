@@ -20,7 +20,8 @@ export FSDEV_PATH="/workspaces/share"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
 # Build initrd each run (cheap; keeps guest runner in sync).
-./scripts/v9fs-build-initrd /home/v9fs-test/initrd.cpio
+export INITRD="/home/v9fs-test/initrd.patched.cpio"
+./scripts/v9fs-build-initrd "${INITRD}"
 
 # Ask initrd to run guest tests, and propagate timestamp so the guest writes
 # guest.exitcode into the same logs/<ts>/ directory the host checks.
