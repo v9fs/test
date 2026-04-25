@@ -95,7 +95,11 @@ def write_header(w, **fields):
 
 def iter_newc_entries(f):
     while True:
-        hdr = read_exact(f, 110)
+        try:
+            hdr = read_exact(f, 110)
+        except EOFError:
+            # Some initrds may omit a TRAILER!!! record and just end.
+            break
         if hdr[:6] != b"070701":
             raise ValueError(f"bad magic: {hdr[:6]!r}")
 
