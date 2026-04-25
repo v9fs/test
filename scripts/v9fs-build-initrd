@@ -21,9 +21,9 @@ set -eu
 exec >/dev/console 2>&1
 
 mkdir -p /proc /sys /dev
-mount -t proc proc /proc 2>/dev/null || true
-mount -t sysfs sysfs /sys 2>/dev/null || true
-mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devtmpfs devtmpfs /dev || true
 
 mkdir -p /run /tmp /mnt/9
 
@@ -50,10 +50,10 @@ if [ -n "${ts:-}" ] && [ -d "$repo" ]; then
   echo "init: OK" >"$repo/logs/$ts/guest.log" 2>/dev/null || true
 fi
 
-sync 2>/dev/null || true
+sync || true
 echo "init: requesting poweroff via sysrq"
-echo o >/proc/sysrq-trigger 2>/dev/null || true
-echo b >/proc/sysrq-trigger 2>/dev/null || true
+echo o >/proc/sysrq-trigger || true
+echo b >/proc/sysrq-trigger || true
 
 # Never exit PID1; if poweroff fails, just idle.
 echo "init: poweroff returned; idling"
