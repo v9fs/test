@@ -25,11 +25,7 @@ jobs:
           - postmark
           - dbench
           - diod-regression
-          - qemu-9p2000
-          - qemu-9p2000.u
           - qemu-9p2000.L
-          - diod-9p2000
-          - diod-9p2000.u
           - diod-9p2000.L
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -25,13 +25,13 @@ case "${tests}" in
   diod-regression)
     ./scripts/v9fs-prepare-diod-regression
     ;;
-  qemu-9p2000|qemu-9p2000.u|qemu-9p2000.L)
+  qemu-9p2000.L)
     ;;
-  diod-9p2000|diod-9p2000.u|diod-9p2000.L)
+  diod-9p2000.L)
     ./scripts/v9fs-prepare-diod-server
     ;;
   *)
-    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench|diod-regression|qemu-9p2000{,.u,.L}|diod-9p2000{,.u,.L})"
+    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench|diod-regression|qemu-9p2000.L|diod-9p2000.L)"
     exit 2
     ;;
 esac

@@ -36,12 +36,7 @@ mkdir -p /run /tmp /mnt/9
 tests="__V9FS_TESTS__"
 echo "init: tests=${tests}"
 
-# For qemu protocol tests, mount hostshare with the requested dialect so the
-# subsequent chroot uses that dialect. Otherwise use a stable dialect.
 bootver="9p2000.L"
-case "${tests}" in
-  qemu-9p2000|qemu-9p2000.u|qemu-9p2000.L) bootver="${tests#qemu-}" ;;
-esac
 echo "init: bootver=${bootver}"
 
 if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9; then
@@ -62,7 +57,7 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
       dbench)
         /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/dbench; /workspaces/tmp/testbin/dbench/dbench -t 30 -c /workspaces/tmp/testbin/dbench/client.txt -D /workspaces/tmpdir/dbench 16' || rc=$?
         ;;
-      qemu-9p2000|qemu-9p2000.u|qemu-9p2000.L|diod-9p2000|diod-9p2000.u|diod-9p2000.L)
+      qemu-9p2000.L|diod-9p2000.L)
         /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
           set -euo pipefail
           tests="__V9FS_TESTS__"

@@ -110,6 +110,13 @@ mkdir -p "$cli/tcase/dir2"
 mv "$cli/tcase/a2" "$cli/tcase/dir2/a"
 test -f "$exp/tcase/dir2/a"
 
+echo "== rename over existing (atomic replace) =="
+echo old >"$cli/tcase/old"
+echo new >"$cli/tcase/new"
+mv -f "$cli/tcase/new" "$cli/tcase/old"
+assert_eq "$(cat "$exp/tcase/old")" "new"
+test ! -e "$exp/tcase/new"
+
 echo "== symlink + readlink =="
 ln -s "dir2/a" "$cli/tcase/syma"
 assert_eq "$(readlink "$exp/tcase/syma")" "dir2/a"
@@ -117,6 +124,34 @@ assert_eq "$(readlink "$exp/tcase/syma")" "dir2/a"
 echo "== hardlink =="
 ln "$cli/tcase/dir2/a" "$cli/tcase/a_hard"
 assert_eq "$(stat -c %h "$exp/tcase/dir2/a")" "$(stat -c %h "$exp/tcase/a_hard")"
+
+echo "== truncate and sparse writes =="
+# Write a single byte at a large offset. This should expand apparent size without
+# requiring the backend to report real allocation semantics.
+dd if=/dev/zero of="$cli/tcase/sparse" bs=1 count=1 seek=$((1024*1024)) conv=notrunc status=noxfer
+sz_cli="$(stat -c %s "$cli/tcase/sparse")"
+sz_exp="$(stat -c %s "$exp/tcase/sparse")"
+test "$sz_cli" -ge $((1024*1024 + 1)) || fail "expected sparse size >= 1MiB+1 on client view, got $sz_cli (exp=$sz_exp)"
+: >"$cli/tcase/sparse"
+assert_eq "$(stat -c %s "$exp/tcase/sparse")" "0"
+
+echo "== unlink while open =="
+echo hold >"$cli/tcase/open_unlink"
+(
+  exec 3<"$cli/tcase/open_unlink"
+  rm -f "$cli/tcase/open_unlink"
+  cat <&3 >/dev/null
+  exec 3<&-
+)
+test ! -e "$exp/tcase/open_unlink"
+
+echo "== long filename and deep pathwalk =="
+longname="$(printf 'a%.0s' $(seq 1 200))"
+touch "$cli/tcase/$longname"
+test -f "$exp/tcase/$longname"
+mkdir -p "$cli/tcase/deep/1/2/3/4/5/6/7/8/9"
+echo deep >"$cli/tcase/deep/1/2/3/4/5/6/7/8/9/file"
+assert_eq "$(cat "$exp/tcase/deep/1/2/3/4/5/6/7/8/9/file")" "deep"
 
 echo "== chmod propagation =="
 chmod 640 "$cli/tcase/dir2/a"
@@ -146,6 +181,11 @@ stat -f "$mnt" >/dev/null 2>&1 || df "$mnt"
 echo "== unlink, rmdir =="
 rm -f "$cli/tcase/b"
 test ! -e "$exp/tcase/b"
+rmdir "$cli/tcase/deep/1/2/3/4/5/6/7/8/9" 2>/dev/null || true
+rm -f "$cli/tcase/deep/1/2/3/4/5/6/7/8/9/file" 2>/dev/null || true
+rm -rf "$cli/tcase/deep" 2>/dev/null || true
+rm -f "$cli/tcase/$longname" 2>/dev/null || true
+rm -f "$cli/tcase/old" "$cli/tcase/sparse" 2>/dev/null || true
 rmdir "$cli/tcase/dir2" 2>/dev/null || true
 rm -f "$cli/tcase/dir2/a" "$cli/tcase/a_hard" "$cli/tcase/syma" 2>/dev/null || true
 rmdir "$cli/tcase/dir2"
