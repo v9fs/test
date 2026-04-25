@@ -9,8 +9,8 @@ check="${3:-1}"
 # GitHub Actions runner user when uploading `logs/` as an artifact.
 umask 022
 
-cpu_bin="${CPU_BIN:-/home/v9fs-test/go/bin/cpu}"
-cpu_key="${CPU_KEY:-/home/v9fs-test/.ssh/identity}"
+cpu_bin="${CPU_BIN:-/opt/v9fs/go/bin/cpu}"
+cpu_key="${CPU_KEY:-/opt/v9fs/.ssh/identity}"
 
 export TIMESTAMP="${TIMESTAMP:-$(date +%s)}"
 mkdir -p "logs/${TIMESTAMP}"
@@ -28,7 +28,7 @@ export FSDEV_PATH="/workspaces/share"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
 # Use the image-provided u-root/cpu initrd (starts cpud as PID 1).
-export INITRD="${INITRD:-/home/v9fs-test/initrd.cpio}"
+export INITRD="${INITRD:-/opt/v9fs/initrd.cpio}"
 
 # Keep kernel cmdline for debugging, but don't rely on it for test execution.
 export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
