@@ -1,6 +1,7 @@
 ## TODO
 
 - Extend smoke test into a small suite (create/rename/unlink, fsync, directory traversal, large file IO).
+- Add benchmark stages (fsx, postmark, dbench) to guest-direct CI.
 - Decide whether to adopt a u-root/u-root+cpu initramfs for richer tooling distribution.
 - Wire `v9fs/linux` to trigger `repository_dispatch` into `linux-kernel-publish.yml`.
 

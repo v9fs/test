@@ -16,12 +16,27 @@ export PIDFILE="/home/v9fs-test/qemu.pid"
 export FSDEV_PATH="/"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
+# Prepare benchmark binaries when requested.
+case "${tests}" in
+  smoke) ;;
+  fsx|postmark|dbench)
+    ./scripts/v9fs-prepare-benchmarks
+    ;;
+  *)
+    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench)"
+    exit 2
+    ;;
+esac
+
+# Tell v9fs-build-initrd which test to bake in.
+export V9FS_TESTS="${tests}"
+
 # Patch the image-provided initrd so u-root runs our `/bin/uinit`.
 export INITRD="${INITRD:-/opt/v9fs/initrd.patched.cpio}"
 ./scripts/v9fs-build-initrd "${INITRD}"
 
 # Pass timestamp so uinit writes guest.exitcode into logs/<ts>/.
-export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
+export EXTRA_APPEND="v9fs.ts=${TIMESTAMP} v9fs.tests=${tests}"
 
 # Run QEMU daemonized, but stream qemu.log into docker logs.
 export QEMU_DAEMONIZE=1

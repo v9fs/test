@@ -14,8 +14,16 @@ permissions:
   contents: read
 
 jobs:
-  smoke:
+  tests:
     runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - smoke
+          - fsx
+          - postmark
+          - dbench
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
@@ -31,7 +39,7 @@ jobs:
           gh release download "${KERNEL_RELEASE}" -p Image -D kernel/.build/arch/arm64/boot --clobber
           ls -la kernel/.build/arch/arm64/boot/Image
 
-      - name: Run smoke test (guest-direct)
+      - name: Run ${{ matrix.test }} (guest-direct, chroot)
         run: |
           mkdir -p "$GITHUB_WORKSPACE/tmp"
           docker run --rm --privileged \
@@ -42,7 +50,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             "${V9FS_DOCKER_IMAGE}" \
-            bash -lc "./scripts/v9fs-run-tests smoke"
+            bash -lc "./scripts/v9fs-run-tests '${{ matrix.test }}'"
 
       - name: Dump logs on failure
         if: failure()
@@ -70,7 +78,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-logs
+          name: ${{ matrix.test }}-logs
           path: logs
           retention-days: 7
 

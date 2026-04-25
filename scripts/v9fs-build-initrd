@@ -33,33 +33,47 @@ fi
 
 mkdir -p /run /tmp /mnt/9
 
-ts=""
-for w in $(cat /proc/cmdline 2>/dev/null || true); do
-  case "$w" in
-    v9fs.ts=*) ts="${w#v9fs.ts=}" ;;
-  esac
-done
-
-echo "init: mount+ls (chroot) 9p smoke ts=${ts:-unset}"
+tests="__V9FS_TESTS__"
+echo "init: tests=${tests}"
 
 if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
   echo "init: mounted hostshare at /mnt/9"
   if [ -x /mnt/9/usr/sbin/chroot ] && [ -x /mnt/9/usr/bin/bash ]; then
     echo "init: chroot -> /mnt/9, running container bash+ls"
-    /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; ls -la /; ls -la /home/v9fs-test/test | head'
+    rc=0
+    case "${tests}" in
+      smoke)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; ls -la /; ls -la /home/v9fs-test/test | head' || rc=$?
+        ;;
+      fsx)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir; rm -f /workspaces/tmpdir/fsx.testfile; /workspaces/tmp/testbin/fsx/fsx -N 1000 -R -W /workspaces/tmpdir/fsx.testfile' || rc=$?
+        ;;
+      postmark)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/postmark; cd /workspaces/tmpdir/postmark; /workspaces/tmp/testbin/postmark/postmark <<EOF\nset size 10 100000\nset number 2000\nset transactions 2000\nshow\nrun\nquit\nEOF' || rc=$?
+        ;;
+      dbench)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/dbench; /workspaces/tmp/testbin/dbench/dbench -t 30 -c /workspaces/tmp/testbin/dbench/client.txt -D /workspaces/tmpdir/dbench 16' || rc=$?
+        ;;
+      *)
+        echo "init: ERROR: unknown tests=${tests}"
+        rc=2
+        ;;
+    esac
   else
     echo "init: missing /usr/sbin/chroot or /bin/bash in exported root; falling back to initrd ls"
     ls -la /mnt/9 || true
+    rc=2
   fi
 else
   echo "init: ERROR: mount hostshare failed"
+  rc=2
 fi
 
 repo="/mnt/9/home/v9fs-test/test"
 if [ -d "$repo" ]; then
   mkdir -p "$repo/logs" || true
-  echo 0 >"$repo/logs/guest.exitcode" || true
-  echo "init: OK" >"$repo/logs/guest.log" || true
+  echo "${rc:-2}" >"$repo/logs/guest.exitcode" || true
+  echo "init: tests=${tests} rc=${rc:-2}" >"$repo/logs/guest.log" || true
 fi
 
 sync || true
@@ -73,6 +87,9 @@ while true; do
 done
 EOF
 chmod +x "$init"
+
+# Bake the selected test into /init (guest environment has no V9FS_TESTS).
+sed -i "s/__V9FS_TESTS__/${V9FS_TESTS:-smoke}/g" "$init"
 
 # Collect required userland binaries and their shared libs from the container FS.
 mkdir -p "$work/rootfs"
