@@ -37,7 +37,7 @@ export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
 
 echo "Waiting for guest cpud..."
 for _ in $(seq 1 60); do
-  if "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 uname -rm >/dev/null 2>&1; then
+  if "${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s localhost uname -rm >/dev/null 2>&1; then
     break
   fi
   sleep 1
@@ -45,7 +45,7 @@ done
 
 echo "Running guest tests via cpu (tests=${tests} type=${type} check=${check})"
 export LOG="logs/${TIMESTAMP}"
-"${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s 127.0.0.1 \
+"${cpu_bin}" -key "${cpu_key}" -sp 17010 -timeout9p 2s localhost \
   /mnt/9/workspaces/share/test/scripts/v9fs-guest-run "${tests}" "${type}" "${check}" || true
 
 # Wait for QEMU to exit (guest may still be running; kill if needed).
