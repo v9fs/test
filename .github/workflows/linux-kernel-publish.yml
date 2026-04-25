@@ -27,8 +27,10 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-24.04-arm
+    env:
+      V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:latest
     steps:
-      - name: Checkout harness (Dockerfile + scripts)
+      - name: Checkout harness (scripts)
         uses: actions/checkout@v4
 
       - name: Checkout kernel
@@ -37,9 +39,6 @@ jobs:
           repository: ${{ inputs.linux_repository || github.event.client_payload.linux_repository || 'v9fs/linux' }}
           ref: ${{ inputs.linux_ref || github.event.client_payload.linux_ref || 'main' }}
           path: linux
-
-      - name: Build Docker environment
-        run: docker build -t v9fs-test-env:local .
 
       - name: Build kernel (arm64 Image)
         run: |
@@ -50,7 +49,7 @@ jobs:
             -v "$GITHUB_WORKSPACE/kernel:/workspaces/kernel" \
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
-            v9fs-test-env:local \
+            "${V9FS_DOCKER_IMAGE}" \
             bash -lc '\
               set -euo pipefail; \
               out=/workspaces/linux/.build; \

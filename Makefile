@@ -1,12 +1,9 @@
-.PHONY: docker-build docker-smoke
+.PHONY: docker-smoke
 
-IMAGE ?= v9fs-test-env:local
+IMAGE ?= ghcr.io/v9fs/docker:latest
 KERNEL_RELEASE ?= kernel-main
 
-docker-build:
-	docker build -t $(IMAGE) .
-
-docker-smoke: docker-build
+docker-smoke:
 	mkdir -p ./tmp ./kernel
 	@echo "Place kernel Image at ./kernel/.build/arch/arm64/boot/Image (or download from release $(KERNEL_RELEASE))"
 	docker run --rm --privileged \
@@ -16,5 +13,5 @@ docker-smoke: docker-build
 	  -v "$$(pwd)/tmp:/workspaces/tmp" \
 	  -w /home/v9fs-test/test \
 	  $(IMAGE) \
-	  bash -lc "v9fs-run-tests smoke"
+	  bash -lc "./scripts/v9fs-run-tests smoke"
 
