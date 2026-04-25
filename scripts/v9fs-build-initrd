@@ -58,7 +58,13 @@ cat >"$work/etc/group" <<'EOF'
 root:x:0:
 EOF
 
-cp /bin/busybox "$work/bin/busybox"
+# Busybox provides core utils (sh, mount, etc.) inside initrd.
+bb="$(command -v busybox || true)"
+if [ -z "${bb}" ] || [ ! -x "${bb}" ]; then
+  echo "ERROR: busybox not found in container image"
+  exit 2
+fi
+cp "${bb}" "$work/bin/busybox"
 for a in sh mount mkdir ln ls cat echo sleep uname ps kill date sed rm sync poweroff halt reboot; do
   ln -s /bin/busybox "$work/bin/$a" 2>/dev/null || true
 done
