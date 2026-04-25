@@ -69,7 +69,7 @@ copy_file() {
 }
 copy_libs() {
   local bin="$1"
-  ldd "$bin" | awk '/=> \\/|^\\//{print $(NF-1)}' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | while read -r lib; do
+  ldd "$bin" | awk '/=> \\//{print $3} /^\\//{print $1}' | while read -r lib; do
     [ -n "$lib" ] || continue
     [ -f "$lib" ] || continue
     copy_file "$lib" "$lib"
