@@ -48,11 +48,16 @@ fi
 
 echo "Waiting for guest cpud..."
 last_err=""
+port_ok=0
 for i in $(seq 1 60); do
   set +e
   timeout 1s bash -lc '</dev/tcp/127.0.0.1/17010' >/dev/null 2>&1
   tcp_st="$?"
   set -e
+  if [ "${tcp_st}" = "0" ] && [ "${port_ok}" = "0" ]; then
+    port_ok=1
+    echo "Port 17010 is accepting connections."
+  fi
   if [ "${tcp_st}" != "0" ] && [ $((i % 5)) -eq 0 ]; then
     echo "Port 17010 not accepting connections yet (attempt ${i}/60)"
   fi
