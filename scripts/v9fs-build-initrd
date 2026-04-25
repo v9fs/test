@@ -40,16 +40,22 @@ for w in $(cat /proc/cmdline 2>/dev/null || true); do
   esac
 done
 
-echo "init: mount+ls 9p smoke ts=${ts:-unset}"
+echo "init: mount+ls (chroot) 9p smoke ts=${ts:-unset}"
 
 if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
   echo "init: mounted hostshare at /mnt/9"
-  ls -la /mnt/9 || true
+  if [ -x /mnt/9/usr/sbin/chroot ] && [ -x /mnt/9/usr/bin/bash ]; then
+    echo "init: chroot -> /mnt/9, running container bash+ls"
+    /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; ls -la /; ls -la /home/v9fs-test/test | head'
+  else
+    echo "init: missing /usr/sbin/chroot or /bin/bash in exported root; falling back to initrd ls"
+    ls -la /mnt/9 || true
+  fi
 else
   echo "init: ERROR: mount hostshare failed"
 fi
 
-repo="/mnt/9/test"
+repo="/mnt/9/home/v9fs-test/test"
 if [ -d "$repo" ]; then
   mkdir -p "$repo/logs" || true
   echo 0 >"$repo/logs/guest.exitcode" || true

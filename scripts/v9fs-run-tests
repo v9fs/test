@@ -12,14 +12,8 @@ mkdir -p "logs/${TIMESTAMP}"
 export QEMULOG="logs/${TIMESTAMP}/qemu.log"
 export PIDFILE="/home/v9fs-test/qemu.pid"
 
-# Stable export root so 9p sees our bind mounts.
-mkdir -p /workspaces/share
-mkdir -p /workspaces/share/test /workspaces/share/tmp /workspaces/share/kernel /workspaces/share/tmpdir
-mountpoint -q /workspaces/share/test || mount --bind /home/v9fs-test/test /workspaces/share/test
-mountpoint -q /workspaces/share/tmp || mount --bind /workspaces/tmp /workspaces/share/tmp
-mountpoint -q /workspaces/share/kernel || mount --bind /workspaces/kernel /workspaces/share/kernel
-
-export FSDEV_PATH="/workspaces/share"
+# Export the whole container root over 9p.
+export FSDEV_PATH="/"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
 # Patch the image-provided initrd so u-root runs our `/bin/uinit`.
