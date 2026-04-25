@@ -18,15 +18,14 @@ This repo now contains a **minimal 9p client smoke test harness**:
 
 ### Local smoke run (Docker + QEMU)
 
-1) Build the image:
+1. Build the image:
 
 ```bash
-docker pull ghcr.io/v9fs/docker:latest
+docker pull ghcr.io/v9fs/docker:2.0.0
 ```
 
-2) Put a kernel `Image` at `./kernel/.build/arch/arm64/boot/Image`
-
-3) Run the smoke test:
+1. Put a kernel `Image` at `./kernel/.build/arch/arm64/boot/Image`
+2. Run the smoke test:
 
 ```bash
 make docker-smoke
@@ -121,19 +120,20 @@ CI uses the same Docker + QEMU flow as local development, but **kernel builds ar
 published separately** from the harness tests:
 
 1. A dedicated workflow builds `v9fs/linux` and publishes the arm64 `Image` to
-   **GitHub Releases** (and GHCR).
+  **GitHub Releases** (and GHCR).
 2. The harness workflows download that published `Image` into `kernel/.build/arch/...`
-   and run `v9fs-run-tests ...` with `--privileged` so the harness can bind-mount a
+  and run `v9fs-run-tests ...` with `--privileged` so the harness can bind-mount a
    stable 9p export root (`/workspaces/share`).
 
 ### Workflows
 
 
-| Workflow | File | When it runs |
-| -------- | ---- | ------------ |
-| **Publish Linux kernel** | `.github/workflows/linux-kernel-publish.yml` | **`repository_dispatch`** from `v9fs/linux` (recommended) or **`workflow_dispatch`** here. Builds arm64 `Image`, uploads it to a release tag you choose (`kernel-main`, `kernel-nightly`, `kernel-<version>`, …), and pushes a GHCR bundle tagged by the **linux commit SHA** plus your release tag. |
-| **CI (push and manual)** | `.github/workflows/demand.yml` | On **every push** (all branches), **manual** dispatch, or **`workflow_call`**. Downloads `Image` from the **`kernel-main`** release by default (override via `kernel_release`). |
-| **Mainline** | `.github/workflows/nightly.yml` | **Daily** schedule + **manual** dispatch. Downloads `Image` from **`kernel-nightly`** by default (override via `kernel_release`). |
+| Workflow                 | File                                         | When it runs                                                                                                                                                                                                                                                                                         |
+| ------------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Publish Linux kernel** | `.github/workflows/linux-kernel-publish.yml` | `**repository_dispatch`** from `v9fs/linux` (recommended) or `**workflow_dispatch**` here. Builds arm64 `Image`, uploads it to a release tag you choose (`kernel-main`, `kernel-nightly`, `kernel-<version>`, …), and pushes a GHCR bundle tagged by the **linux commit SHA** plus your release tag. |
+| **CI (push and manual)** | `.github/workflows/demand.yml`               | On **every push** (all branches), **manual** dispatch, or `**workflow_call`**. Downloads `Image` from the `**kernel-main**` release by default (override via `kernel_release`).                                                                                                                      |
+| **Mainline**             | `.github/workflows/nightly.yml`              | **Daily** schedule + **manual** dispatch. Downloads `Image` from `**kernel-nightly`** by default (override via `kernel_release`).                                                                                                                                                                    |
+
 
 Because GitHub Actions cannot natively “watch” another repository’s pushes, the
 `v9fs/linux` repo should call `repository_dispatch` on `v9fs/test` when branches change
@@ -160,7 +160,6 @@ The publish workflow uploads the **arm64** kernel `Image` as a stable release as
 - **Rolling mainline**: `https://github.com/v9fs/test/releases/download/kernel-main/Image`
 - **Rolling nightly**: `https://github.com/v9fs/test/releases/download/kernel-nightly/Image`
 - **Versioned** (example): `https://github.com/v9fs/test/releases/download/kernel-6.12.0/Image`
-
 
 Log artifact names (avoid collisions when jobs run in parallel):
 

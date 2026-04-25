@@ -6,7 +6,7 @@ Per `AGENTS.md`, this is based on **implementation evidence**, not on secondary 
 
 ## What the `v9fs/docker` initrd actually contains
 
-From inspecting `/home/v9fs-test/initrd.cpio` inside the `ghcr.io/v9fs/docker:latest` image:
+From inspecting `/home/v9fs-test/initrd.cpio` inside the `ghcr.io/v9fs/docker:2.0.0` image:
 
 - `init` is a **symlink** to `bbin/cpud`
 - `bbin/cpud`, `bbin/gosh`, and `bbin/init` are **symlinks** to `bb`

@@ -33,6 +33,10 @@ export INITRD="${INITRD:-/home/v9fs-test/initrd.cpio}"
 # Keep kernel cmdline for debugging, but don't rely on it for test execution.
 export EXTRA_APPEND="v9fs.ts=${TIMESTAMP}"
 
+# Stream QEMU serial into the container logs (and tee to logs/<ts>/qemu.log).
+export QEMU_DAEMONIZE=0
+export QEMU_STREAM_LOG=1
+
 /home/v9fs-test/test/qemu.bash
 
 echo "Waiting for guest cpud..."
