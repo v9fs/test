@@ -51,7 +51,26 @@ jobs:
             -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
             -w /home/v9fs-test/test \
             v9fs-test-env:local \
-            bash -lc 'set -euo pipefail; mkdir -p /workspaces/linux/.build; if [ ! -f /workspaces/linux/.build/.config ]; then make -C /workspaces/linux O=/workspaces/linux/.build defconfig; fi; make -C /workspaces/linux O=/workspaces/linux/.build -j\"$(nproc)\"; mkdir -p /workspaces/kernel/.build/arch/arm64/boot; cp -f /workspaces/linux/.build/arch/arm64/boot/Image /workspaces/kernel/.build/arch/arm64/boot/Image'
+            bash -lc '\
+              set -euo pipefail; \
+              out=/workspaces/linux/.build; \
+              mkdir -p \"$out\"; \
+              if [ ! -f \"$out/.config\" ]; then \
+                make -C /workspaces/linux O=\"$out\" defconfig; \
+              fi; \
+              cfg=/workspaces/linux/scripts/config; \
+              if [ -x \"$cfg\" ]; then \
+                \"$cfg\" --file \"$out/.config\" \
+                  -e NET_9P -e NET_9P_VIRTIO -e 9P_FS -e 9P_FS_POSIX_ACL \
+                  -e VIRTIO_PCI -e PCI; \
+                make -C /workspaces/linux O=\"$out\" olddefconfig; \
+              else \
+                echo \"WARNING: missing scripts/config; relying on defconfig\"; \
+              fi; \
+              make -C /workspaces/linux O=\"$out\" -j\"$(nproc)\"; \
+              mkdir -p /workspaces/kernel/.build/arch/arm64/boot; \
+              cp -f \"$out/arch/arm64/boot/Image\" /workspaces/kernel/.build/arch/arm64/boot/Image; \
+            '
 
       - name: Publish Image as release asset
         env:
