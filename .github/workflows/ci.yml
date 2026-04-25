@@ -26,7 +26,6 @@ jobs:
           - dbench
           - diod-regression
           - qemu-9p2000.L
-          - diod-9p2000.L
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
