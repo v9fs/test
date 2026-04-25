@@ -43,7 +43,7 @@ else
   echo "init: ERROR: mount hostshare failed"
 fi
 
-repo="/mnt/9/workspaces/share/test"
+repo="/mnt/9/test"
 if [ -d "$repo" ]; then
   mkdir -p "$repo/logs" || true
   echo 0 >"$repo/logs/guest.exitcode" || true
