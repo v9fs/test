@@ -44,16 +44,15 @@ else
 fi
 
 repo="/mnt/9/workspaces/share/test"
-if [ -n "${ts:-}" ] && [ -d "$repo" ]; then
-  mkdir -p "$repo/logs/$ts" || true
-  echo 0 >"$repo/logs/$ts/guest.exitcode" 2>/dev/null || true
-  echo "init: OK" >"$repo/logs/$ts/guest.log" 2>/dev/null || true
+if [ -d "$repo" ]; then
+  mkdir -p "$repo/logs" || true
+  echo 0 >"$repo/logs/guest.exitcode" || true
+  echo "init: OK" >"$repo/logs/guest.log" || true
 fi
 
 sync || true
 echo "init: requesting poweroff via sysrq"
 echo o >/proc/sysrq-trigger || true
-echo b >/proc/sysrq-trigger || true
 
 # Never exit PID1; if poweroff fails, just idle.
 echo "init: poweroff returned; idling"

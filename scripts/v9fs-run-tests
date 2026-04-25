@@ -59,8 +59,18 @@ fi
 chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 
 guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
+guest_rc_src="logs/guest.exitcode"
+guest_log_src="logs/guest.log"
+
+if [ -f "${guest_rc_src}" ]; then
+  cp -f "${guest_rc_src}" "${guest_rc_file}" 2>/dev/null || true
+fi
+if [ -f "${guest_log_src}" ]; then
+  cp -f "${guest_log_src}" "logs/${TIMESTAMP}/guest.log" 2>/dev/null || true
+fi
+
 if [ ! -f "${guest_rc_file}" ]; then
-  echo "WARNING: missing ${guest_rc_file}; treating as failure"
+  echo "WARNING: missing ${guest_rc_file} (and ${guest_rc_src}); treating as failure"
   exit 2
 fi
 
