@@ -37,7 +37,6 @@ qemu_args=(
   -device virtio-rng-pci,rng=rng0
   -device virtio-net-pci,netdev=n1
   -netdev user,id=n1,hostfwd=tcp:127.0.0.1:17010-:17010
-  -nographic
   -fsdev "local,security_model=none,writeout=immediate,id=fsdev0,path=${FSDEV_PATH}"
   -device virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=hostshare
   -append "${APPEND} ${EXTRA_APPEND:-}"
@@ -56,10 +55,11 @@ fi
 if [ "${QEMU_STREAM_LOG}" = "1" ]; then
   # Write pidfile ourselves in foreground mode.
   echo "$$" >"${PIDFILE}" 2>/dev/null || true
-  "${QEMU}" "${qemu_args[@]}" ${EXTRA} -serial stdio 2>&1 | tee "${LOG}"
+  # Use -nographic so QEMU routes serial+monitor to stdio once.
+  "${QEMU}" "${qemu_args[@]}" ${EXTRA} -nographic 2>&1 | tee "${LOG}"
 else
   echo "$$" >"${PIDFILE}" 2>/dev/null || true
-  exec "${QEMU}" "${qemu_args[@]}" ${EXTRA} -serial stdio
+  exec "${QEMU}" "${qemu_args[@]}" ${EXTRA} -nographic
 fi
   -kernel "${KERNEL}" \
   -cpu "${QEMUCPU}" \
