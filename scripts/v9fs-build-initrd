@@ -17,6 +17,9 @@ cat >"$uinit" <<'EOF'
 #!/bin/sh
 set -eu
 
+# Force output to the serial console that QEMU captures.
+exec >/dev/console 2>&1
+
 mkdir -p /run /tmp /mnt/9
 
 bb="/bbin/bb"
