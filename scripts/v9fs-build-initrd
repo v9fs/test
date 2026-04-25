@@ -221,6 +221,9 @@ def write_symlink(w, name: str, target: str, uid: int = 0, gid: int = 0):
     mode = stat.S_IFLNK | 0o777
     write_entry(w, name, mode, uid, gid, target.encode("utf-8"))
 
+def write_dir(w, name: str, mode: int = 0o755, uid: int = 0, gid: int = 0):
+    write_entry(w, name, stat.S_IFDIR | mode, uid, gid, b"")
+
 def main():
     init_data = open(init_path, "rb").read()
     init_mode = stat.S_IFREG | 0o755
@@ -259,6 +262,17 @@ def main():
             write_entry(wf, "init", init_mode, 0, 0, init_data)
 
         # Add extra binaries/libs (and overwrite if absent in base).
+        # Ensure parent directories exist in the archive.
+        dirs = set()
+        for p in extras.keys():
+            parts = p.split("/")
+            for i in range(1, len(parts)):
+                d = "/".join(parts[:i])
+                if d:
+                    dirs.add(d)
+        for d in sorted(dirs, key=lambda s: (s.count("/"), s)):
+            write_dir(wf, d)
+
         for path, (mode, data) in extras.items():
             write_entry(wf, path, mode, 0, 0, data)
 
