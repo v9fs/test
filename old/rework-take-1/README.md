@@ -1,12 +1,3 @@
-# v9fs test harness (clean-slate)
-
-This branch is being reworked from a clean slate.
-
-The previous implementation snapshot is preserved at:
-
-- Git tag: `rework-take-1`
-- Directory: `old/rework-take-1/`
-
 # v9fs test harness
 
 This repository contains **test code and scripts** for exercising the Linux **9p (v9fs)** filesystem.
