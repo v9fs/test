@@ -5,12 +5,7 @@ out="${1:-/home/v9fs-test/initrd.cpio}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-u_root="${UROOT_BIN:-/home/v9fs-test/go/bin/u-root}"
-if [ ! -x "$u_root" ]; then
-  echo "ERROR: u-root binary not found/executable at $u_root"
-  exit 2
-fi
-
+# We run inside the `v9fs/docker` image, which provides a base initrd at this path.
 base="${UROOT_BASE:-/home/v9fs-test/initrd.cpio}"
 if [ ! -f "$base" ]; then
   echo "ERROR: base initrd not found at $base"
@@ -59,8 +54,148 @@ exec sh
 EOF
 chmod +x "$init"
 
-# Overlay our /init onto the base initrd, without building any new Go commands.
-# Also keep /bin/sh from the base archive as the default shell.
-"$u_root" -base "$base" -nocmd -defaultsh="/bin/sh" -o "$out" -initcmd="/init" -files "$init"
+# Overlay our /init onto the base initrd using a tiny Python newc (cpio) rewriter.
+# This avoids needing `cpio`, `busybox`, or a working u-root build toolchain.
+python3 - "$base" "$init" "$out" <<'PY'
+import os, sys, stat, time
+
+base_path, init_path, out_path = sys.argv[1:4]
+
+def align4(x: int) -> int:
+    return (x + 3) & ~3
+
+def read_exact(f, n: int) -> bytes:
+    b = f.read(n)
+    if len(b) != n:
+        raise EOFError(f"short read: wanted {n}, got {len(b)}")
+    return b
+
+def parse_hex(b: bytes) -> int:
+    return int(b.decode("ascii"), 16)
+
+def write_header(w, **fields):
+    # newc header fields are 8 hex bytes each (except magic)
+    parts = [
+        b"070701",
+        f"{fields['ino']:08x}".encode(),
+        f"{fields['mode']:08x}".encode(),
+        f"{fields['uid']:08x}".encode(),
+        f"{fields['gid']:08x}".encode(),
+        f"{fields['nlink']:08x}".encode(),
+        f"{fields['mtime']:08x}".encode(),
+        f"{fields['filesize']:08x}".encode(),
+        f"{fields['devmajor']:08x}".encode(),
+        f"{fields['devminor']:08x}".encode(),
+        f"{fields['rdevmajor']:08x}".encode(),
+        f"{fields['rdevminor']:08x}".encode(),
+        f"{fields['namesize']:08x}".encode(),
+        f"{fields['check']:08x}".encode(),
+    ]
+    w.write(b"".join(parts))
+
+def iter_newc_entries(f):
+    while True:
+        hdr = read_exact(f, 110)
+        if hdr[:6] != b"070701":
+            raise ValueError(f"bad magic: {hdr[:6]!r}")
+
+        ino = parse_hex(hdr[6:14])
+        mode = parse_hex(hdr[14:22])
+        uid = parse_hex(hdr[22:30])
+        gid = parse_hex(hdr[30:38])
+        nlink = parse_hex(hdr[38:46])
+        mtime = parse_hex(hdr[46:54])
+        filesize = parse_hex(hdr[54:62])
+        devmajor = parse_hex(hdr[62:70])
+        devminor = parse_hex(hdr[70:78])
+        rdevmajor = parse_hex(hdr[78:86])
+        rdevminor = parse_hex(hdr[86:94])
+        namesize = parse_hex(hdr[94:102])
+        check = parse_hex(hdr[102:110])
+
+        name = read_exact(f, namesize)
+        # name includes trailing NUL
+        if not name.endswith(b"\x00"):
+            raise ValueError("name missing NUL terminator")
+        name_str = name[:-1].decode("utf-8", "replace")
+
+        # pad after name to 4-byte boundary from start of header
+        pad = align4(110 + namesize) - (110 + namesize)
+        if pad:
+            read_exact(f, pad)
+
+        data = read_exact(f, filesize) if filesize else b""
+        pad = align4(filesize) - filesize
+        if pad:
+            read_exact(f, pad)
+
+        yield {
+            "ino": ino, "mode": mode, "uid": uid, "gid": gid, "nlink": nlink, "mtime": mtime,
+            "filesize": filesize, "devmajor": devmajor, "devminor": devminor,
+            "rdevmajor": rdevmajor, "rdevminor": rdevminor, "namesize": namesize, "check": check,
+            "name": name_str, "data": data,
+        }
+
+        if name_str == "TRAILER!!!":
+            break
+
+def write_entry(w, name: str, mode: int, uid: int, gid: int, data: bytes):
+    if not name.endswith("\x00"):
+        name_bytes = name.encode("utf-8") + b"\x00"
+    else:
+        name_bytes = name.encode("utf-8")
+    namesize = len(name_bytes)
+    write_header(
+        w,
+        ino=0,
+        mode=mode,
+        uid=uid,
+        gid=gid,
+        nlink=1,
+        mtime=int(time.time()),
+        filesize=len(data),
+        devmajor=0, devminor=0, rdevmajor=0, rdevminor=0,
+        namesize=namesize,
+        check=0,
+    )
+    w.write(name_bytes)
+    # pad to 4-byte boundary after name
+    pad = align4(110 + namesize) - (110 + namesize)
+    if pad:
+        w.write(b"\x00" * pad)
+    if data:
+        w.write(data)
+        pad = align4(len(data)) - len(data)
+        if pad:
+            w.write(b"\x00" * pad)
+
+def main():
+    init_data = open(init_path, "rb").read()
+    init_mode = stat.S_IFREG | 0o755
+
+    replaced = False
+    with open(base_path, "rb") as rf, open(out_path, "wb") as wf:
+        for ent in iter_newc_entries(rf):
+            name = ent["name"]
+            if name == "TRAILER!!!":
+                break
+            if name in ("init", "/init"):
+                write_entry(wf, "init", init_mode, 0, 0, init_data)
+                replaced = True
+            else:
+                write_entry(wf, name, ent["mode"], ent["uid"], ent["gid"], ent["data"])
+
+        if not replaced:
+            # If base initrd didn't have init, add it before trailer.
+            write_entry(wf, "init", init_mode, 0, 0, init_data)
+
+        # trailer
+        write_entry(wf, "TRAILER!!!", stat.S_IFREG | 0o644, 0, 0, b"")
+
+    os.chmod(out_path, 0o644)
+
+if __name__ == "__main__":
+    main()
+PY
 echo "Wrote initrd to $out"
 
