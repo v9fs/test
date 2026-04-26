@@ -25,7 +25,7 @@ mount -t proc proc /proc || true
 mount -t sysfs sysfs /sys || true
 mount -t devtmpfs devtmpfs /dev || true
 
-# Best-effort: start cpud in background (not used for smoke path).
+# Best-effort: start cpud in background (not used for primary test path).
 if [ -x /bbin/cpud ]; then
   echo "init: starting cpud in background"
   /bbin/cpud >/dev/console 2>&1 &
@@ -36,7 +36,10 @@ mkdir -p /run /tmp /mnt/9
 tests="__V9FS_TESTS__"
 echo "init: tests=${tests}"
 
-if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; then
+bootver="9p2000.L"
+echo "init: bootver=${bootver}"
+
+if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9; then
   echo "init: mounted hostshare at /mnt/9"
   if [ -x /mnt/9/usr/sbin/chroot ] && [ -x /mnt/9/usr/bin/bash ]; then
     echo "init: chroot -> /mnt/9, running container bash+ls"
@@ -53,6 +56,16 @@ if mount -t 9p -o trans=virtio,version=9p2000.L,cache=loose hostshare /mnt/9; th
         ;;
       dbench)
         /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/dbench; /workspaces/tmp/testbin/dbench/dbench -t 30 -c /workspaces/tmp/testbin/dbench/client.txt -D /workspaces/tmpdir/dbench 16' || rc=$?
+        ;;
+      qemu-9p2000.L|diod-9p2000.L)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
+          set -euo pipefail
+          tests="__V9FS_TESTS__"
+          server="${tests%%-*}"
+          dialect="${tests#*-}"
+          mkdir -p /home/v9fs-test/test/logs
+          /home/v9fs-test/test/scripts/v9fs-9p-protocol-tests "$server" "$dialect" 2>&1 | tee -a /home/v9fs-test/test/logs/9p-proto.log
+        ' || rc=$?
         ;;
       diod-regression)
         # Run a subset of diod's kernel-client regression tests (sharness) inside the guest.
