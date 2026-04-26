@@ -34,6 +34,17 @@ jobs:
       - name: Checkout harness
         uses: actions/checkout@v4
 
+      - name: Ensure GitHub CLI present (for release download)
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then
+            gh --version
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gh
+          gh --version
+
       - name: Download published kernel Image
         run: |
           set -euo pipefail
