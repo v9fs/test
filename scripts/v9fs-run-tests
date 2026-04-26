@@ -52,6 +52,19 @@ export QEMU_STREAM_LOG=0
 
 /home/v9fs-test/test/qemu.bash
 
+# Allow slower suites to complete before we kill QEMU.
+# The guest is expected to power off when done.
+wait_secs="${WAIT_SECS:-}"
+if [ -z "${wait_secs}" ]; then
+  case "${tests}" in
+    smoke) wait_secs=180 ;;
+    fsx|postmark|dbench) wait_secs=900 ;;
+    diod-regression) wait_secs=1800 ;;
+    qemu-9p2000.L|diod-9p2000.L) wait_secs=600 ;;
+    *) wait_secs=300 ;;
+  esac
+fi
+
 # Stream guest serial log into the docker log while we proceed.
 tail_pid=""
 if [ -f "${QEMULOG}" ]; then
@@ -62,7 +75,7 @@ fi
 # Wait for QEMU to exit (guest should power off).
 if [ -f "${PIDFILE}" ]; then
   pid="$(cat "${PIDFILE}")"
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 "${wait_secs}"); do
     kill -0 "${pid}" 2>/dev/null || break
     sleep 1
   done
