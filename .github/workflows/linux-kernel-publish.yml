@@ -54,24 +54,24 @@ jobs:
             bash -lc '\
               set -euo pipefail; \
               out=/workspaces/linux/.build; \
-              mkdir -p \"$out\"; \
-              if [ ! -f \"$out/.config\" ]; then \
-                make -C /workspaces/linux O=\"$out\" defconfig; \
+              mkdir -p "$out"; \
+              if [ ! -f "$out/.config" ]; then \
+                make -C /workspaces/linux O="$out" defconfig; \
               fi; \
               cfg=/workspaces/linux/scripts/config; \
-              if [ -x \"$cfg\" ]; then \
-                \"$cfg\" --file \"$out/.config\" \
+              if [ -x "$cfg" ]; then \
+                "$cfg" --file "$out/.config" \
                   -e NET_9P -e NET_9P_VIRTIO -e 9P_FS \
                   -e 9P_FS_POSIX_ACL -e 9P_FS_SECURITY -e 9P_FS_XATTR \
                   -e FS_POSIX_ACL -e TMPFS_POSIX_ACL \
                   -e VIRTIO_PCI -e PCI; \
-                make -C /workspaces/linux O=\"$out\" olddefconfig; \
+                make -C /workspaces/linux O="$out" olddefconfig; \
               else \
                 echo \"WARNING: missing scripts/config; relying on defconfig\"; \
               fi; \
-              make -C /workspaces/linux O=\"$out\" -j\"$(nproc)\"; \
+              make -C /workspaces/linux O="$out" -j"$(nproc)"; \
               mkdir -p /workspaces/kernel/.build/arch/arm64/boot; \
-              cp -f \"$out/arch/arm64/boot/Image\" /workspaces/kernel/.build/arch/arm64/boot/Image; \
+              cp -f "$out/arch/arm64/boot/Image" /workspaces/kernel/.build/arch/arm64/boot/Image; \
             '
 
       - name: Publish Image as release asset
