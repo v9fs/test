@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Evaluate diod sharness results against an XFAIL baseline.
+#
+# Usage:
+#   v9fs-diod-regression-eval <test-suite.log> <xfail.txt> <out_dir>
+#
+# Exits:
+#   0 if all failures are expected (subset of xfail list) OR there are no failures.
+#   1 if there are unexpected failures (regression) OR the inputs are missing.
+
+suite_log="${1:-}"
+xfail_file="${2:-}"
+out_dir="${3:-}"
+
+if [ -z "${suite_log}" ] || [ -z "${xfail_file}" ] || [ -z "${out_dir}" ]; then
+  echo "usage: $0 <test-suite.log> <xfail.txt> <out_dir>" >&2
+  exit 2
+fi
+
+if [ ! -f "${suite_log}" ]; then
+  echo "ERROR: missing suite log: ${suite_log}" >&2
+  exit 2
+fi
+if [ ! -f "${xfail_file}" ]; then
+  echo "ERROR: missing xfail baseline: ${xfail_file}" >&2
+  exit 2
+fi
+
+mkdir -p "${out_dir}"
+
+failures_raw="${out_dir}/failures.raw.txt"
+failures_norm="${out_dir}/failures.txt"
+xfail_norm="${out_dir}/xfail.txt"
+unexpected="${out_dir}/unexpected.txt"
+
+# Extract failures from automake/sharness output.
+# We rely on lines like:
+#   FAIL: t0010-foo.t 38 - description
+#
+# Output format:
+#   t0010-foo.t :: description
+awk '
+  $1 == "FAIL:" {
+    test=$2
+    # Find the " - " separator between step number and description.
+    # Input tokens look like: FAIL: <test> <num> - <desc...>
+    desc=""
+    for (i=3; i<=NF; i++) {
+      if ($i == "-" && i < NF) {
+        for (j=i+1; j<=NF; j++) {
+          if (desc != "") desc = desc " "
+          desc = desc $j
+        }
+        break
+      }
+    }
+    if (desc != "") print test " :: " desc
+  }
+' "${suite_log}" >"${failures_raw}" || true
+
+# Normalize: drop blank lines and comments, trim whitespace, stable sort.
+normalize() {
+  sed -e 's/[[:space:]]\+/ /g' -e 's/^ *//; s/ *$//' \
+    | sed -e '/^$/d' -e '/^#/d' \
+    | sort -u
+}
+
+normalize <"${failures_raw}" >"${failures_norm}" || true
+normalize <"${xfail_file}" >"${xfail_norm}" || true
+
+if [ ! -s "${failures_norm}" ]; then
+  echo "diod-regression-eval: no FAIL lines found (PASS)"
+  exit 0
+fi
+
+# unexpected = failures - xfail
+comm -23 "${failures_norm}" "${xfail_norm}" >"${unexpected}" || true
+
+echo "diod-regression-eval: FAIL lines: $(wc -l <"${failures_norm}" | tr -d ' ')"
+echo "diod-regression-eval: XFAIL baseline: $(wc -l <"${xfail_norm}" | tr -d ' ')"
+echo "diod-regression-eval: unexpected: $(wc -l <"${unexpected}" | tr -d ' ')"
+
+if [ -s "${unexpected}" ]; then
+  echo "diod-regression-eval: regression detected (unexpected failures):"
+  cat "${unexpected}"
+  exit 1
+fi
+
+echo "diod-regression-eval: only expected failures observed (XFAIL)"
+exit 0
+

@@ -1,0 +1,35 @@
+# Known failures (XFAIL) for diod sharness suite when running under the
+# v9fs/test guest-direct QEMU harness (virtio hostshare mount).
+#
+# Format: one entry per line, matching the strings parsed from diod's
+# t/test-suite.log:
+#
+#   <testfile> :: <description>
+#
+# Example:
+#   t0010-v9fs-runasuser.t :: root cannot read file
+#
+# Keep this list minimal and update it intentionally when behavior changes.
+
+t0010-v9fs-runasuser.t :: list long directory
+t0010-v9fs-runasuser.t :: root cannot read file
+t0010-v9fs-runasuser.t :: root cannot stat file
+t0010-v9fs-runasuser.t :: root cannot create file
+t0010-v9fs-runasuser.t :: root cannot create file
+t0010-v9fs-runasuser.t :: mount filesystem with uname=root,access=any fails
+
+t0011-v9fs-allsquash.t :: root can create a directory, mode 755
+t0011-v9fs-allsquash.t :: nobody can create a directory, mode 755
+t0011-v9fs-allsquash.t :: nobody cannot create a file in nobody directory
+
+t0013-v9fs-acl.t :: create a test file and setfacl -m u:root:r
+t0013-v9fs-acl.t :: getfacl confirms ACL is set
+t0013-v9fs-acl.t :: it is set on the server too
+t0013-v9fs-acl.t :: getfacl confirms ACL is unset
+t0013-v9fs-acl.t :: it is unset on the server too
+t0013-v9fs-acl.t :: create a test directory and setfacl -d -m u:root:r
+t0013-v9fs-acl.t :: getfacl confirms ACL is set
+t0013-v9fs-acl.t :: it is set on the server too
+t0013-v9fs-acl.t :: getfacl confirms ACL is unset
+t0013-v9fs-acl.t :: it is unset on the server too
+

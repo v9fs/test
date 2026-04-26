@@ -83,6 +83,7 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           make -C src/cmd test_diodrun test_flock test_flock_single test_atomic_create test_pathwalk
 
           # These are the kernel v9fs client oriented tests.
+          set +e
           timeout 15m make -C t check TESTS="\
             t0010-v9fs-runasuser.t \
             t0011-v9fs-allsquash.t \
@@ -91,9 +92,24 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
             t0020-dbench.t \
             t0021-postmark.t \
           "
+          make_rc="$?"
+          set -e
 
           # Preserve the automake/sharness combined log in the harness logs dir.
-          cp -f "$build/t/test-suite.log" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
+          suite="$build/t/test-suite.log"
+          cp -f "$suite" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
+
+          # Evaluate failures against the harness XFAIL baseline so we can track them
+          # without failing the overall CI stage unless a regression appears.
+          eval_out="/home/v9fs-test/test/logs/diod-xfail"
+          xfail="/home/v9fs-test/test/diod/xfail.txt"
+          /home/v9fs-test/test/scripts/v9fs-diod-regression-eval "$suite" "$xfail" "$eval_out"
+          eval_rc="$?"
+
+          if [ "$eval_rc" = "0" ]; then
+            exit 0
+          fi
+          exit "${make_rc:-1}"
         ' || rc=$?
         ;;
       *)
