@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Harness CI: default to `kernel-latest`, run on successful kernel publish (`workflow_run`), emit `results.json`/diff, update wiki `Regression-Dashboard`, and attach results to `kernel-latest`.
+- Add `scripts/v9fs-ci-report` and `scripts/v9fs-newest-v6-tag` (kernel-aware tip ordering: `v7.2` > `v7.2-rc7`).
 - Tag policy: track only new **v6+** tags; build/publish/test only the **single newest** v6+ tag; also refresh floating **`kernel-latest`** release alias alongside `kernel-<tag>`.
 - Fix sync workflow: ensure fork `master` exists before `gh repo sync`, then FF canonical `upstream` (merge-upstream 404'd without `master`).
 - Revise `sync-torvalds-linux.yml` to use `gh repo sync` for `master` objects, fast-forward canonical `upstream`, and sync only newly missing recent `v*` tags (no full torvalds tag mirror).

@@ -59,6 +59,9 @@ jobs:
           }
           gh --version
 
+      - name: Checkout harness (tag helpers)
+        uses: actions/checkout@v4
+
       - name: Sync upstream branch + track new v6+ tags
         id: mirror
         env:
@@ -68,7 +71,6 @@ jobs:
           set -euo pipefail
 
           major_ge_6() {
-            # v6, v6.18, v6.18-rc1, v7.0, ...
             local maj
             maj=$(printf '%s' "$1" | sed -E 's/^v([0-9]+).*/\1/')
             [[ "${maj}" =~ ^[0-9]+$ ]] && [ "${maj}" -ge 6 ]
@@ -120,7 +122,7 @@ jobs:
             fi
           done < "${candidates}"
 
-          latest_tag=$(sort -V "${candidates}" | tail -n1 || true)
+          latest_tag=$(./scripts/v9fs-newest-v6-tag < "${candidates}" || true)
           echo "latest v6+ tag on torvalds (from recent window): ${latest_tag:-<none>}"
 
           work="${RUNNER_TEMP}/tag-sync"

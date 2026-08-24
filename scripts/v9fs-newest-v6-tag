@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Emit newest v6+ tag name from stdin (one tag per line) using kernel-aware ordering:
+# releases outrank same-version -rcN (v7.2 > v7.2-rc7).
+set -euo pipefail
+python3 - <<'PY'
+import re, sys
+tags = [ln.strip() for ln in sys.stdin if ln.strip()]
+
+def major_ge_6(n: str) -> bool:
+    m = re.match(r"^v(\d+)", n)
+    return bool(m and int(m.group(1)) >= 6)
+
+def key(n: str):
+    m = re.match(r"^v(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-rc(\d+))?$", n)
+    if not m:
+        return (0, 0, 0, -1, n)
+    maj = int(m.group(1))
+    mi = int(m.group(2) or 0)
+    pa = int(m.group(3) or 0)
+    rc = m.group(4)
+    # Final release sorts after all rcs for the same X.Y.Z
+    rc_n = int(rc) if rc is not None else 10**9
+    return (maj, mi, pa, rc_n, n)
+
+cands = [t for t in tags if major_ge_6(t)]
+if not cands:
+    sys.exit(0)
+print(sorted(cands, key=key)[-1])
+PY

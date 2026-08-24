@@ -4,8 +4,8 @@
 - Add benchmark stages (fsx, postmark, dbench) to guest-direct CI.
 - Add a diod regression suite stage (guest-direct) to exercise the kernel v9fs client.
 - Decide whether to adopt a u-root/u-root+cpu initramfs for richer tooling distribution.
-- Configure repo/org secret `V9FS_LINUX_SYNC_TOKEN` (Contents write on `v9fs/linux`, Actions on `v9fs/test`) so `sync-torvalds-linux.yml` can push refs and chain publish.
-- After Image publish, chain Harness CI + wiki summary table + `results.json`/diff artifacts (#15 follow-on).
+- Configure repo/org secret `V9FS_LINUX_SYNC_TOKEN` (Contents write on `v9fs/linux`, Actions + Contents on `v9fs/test` for publish chaining and wiki/`results.json` attach).
+- After Image publish, harness `workflow_run` builds tip report + wiki summary table (`Regression-Dashboard`).
 - Retarget “linux pushes trigger test” work (#6) to sync/orchestrate from this repo.
 
 ## TODO
