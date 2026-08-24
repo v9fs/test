@@ -16,10 +16,15 @@ on:
         default: 'main'
         type: string
       release_tag:
-        description: 'Release tag to publish/update (kernel-main, kernel-nightly, kernel-<version>)'
+        description: 'Release tag to publish/update (kernel-main, kernel-latest, kernel-<version>)'
         required: true
         default: 'kernel-main'
         type: string
+      also_latest:
+        description: 'Also clobber the floating kernel-latest release with the same Image'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -78,12 +83,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.release_tag || github.event.client_payload.release_tag || 'kernel-main' }}
+          ALSO_LATEST: ${{ inputs.also_latest || github.event.client_payload.also_latest || false }}
+          LINUX_REF: ${{ inputs.linux_ref || github.event.client_payload.linux_ref || 'main' }}
         run: |
           set -euo pipefail
           img="kernel/.build/arch/arm64/boot/Image"
           test -f "$img"
-          gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "$TAG" --notes "Automated arm64 kernel Image." --prerelease
           cp -f "$img" Image
-          gh release upload "$TAG" Image --clobber
+
+          publish_one() {
+            local tag="$1"
+            local notes="$2"
+            gh release view "$tag" >/dev/null 2>&1 || \
+              gh release create "$tag" --title "$tag" --notes "$notes" --prerelease
+            gh release upload "$tag" Image --clobber
+            echo "Published Image -> release $tag"
+          }
+
+          publish_one "$TAG" "Automated arm64 kernel Image from ${LINUX_REF}."
+
+          # Floating alias for harness default / wiki “current tip” comparisons.
+          if [ "${ALSO_LATEST}" = "true" ]; then
+            publish_one "kernel-latest" "Floating latest Image (currently ${LINUX_REF} / ${TAG})."
+          fi
 
