@@ -1,6 +1,6 @@
 ## Unreleased
 
-- Tag policy: track only new **v6+** tags; build/publish/test only the **single newest** v6+ tag (not every newly synced tag; no pre-v6 backfill).
+- Tag policy: track only new **v6+** tags; build/publish/test only the **single newest** v6+ tag; also refresh floating **`kernel-latest`** release alias alongside `kernel-<tag>`.
 - Fix sync workflow: ensure fork `master` exists before `gh repo sync`, then FF canonical `upstream` (merge-upstream 404'd without `master`).
 - Revise `sync-torvalds-linux.yml` to use `gh repo sync` for `master` objects, fast-forward canonical `upstream`, and sync only newly missing recent `v*` tags (no full torvalds tag mirror).
 - Add `sync-torvalds-linux.yml`: cron/`workflow_dispatch` mirrors `torvalds/linux` `master` → `v9fs/linux` `upstream` and newly seen `v*` tags from `v9fs/test` only (no CI files in the kernel tree; see #15). New tags can trigger `linux-kernel-publish.yml` via `gh workflow run` using `V9FS_LINUX_SYNC_TOKEN`.

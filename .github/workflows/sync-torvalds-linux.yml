@@ -203,12 +203,13 @@ jobs:
           if [ -z "${tag}" ]; then
             tag="${LATEST_TAG}"
           fi
-          echo "publish: linux_ref=${tag} release_tag=kernel-${tag}"
+          echo "publish: linux_ref=${tag} release_tag=kernel-${tag} (+ kernel-latest)"
           gh workflow run "Publish Linux kernel (arm64 Image)" \
             --repo "${{ github.repository }}" \
             -f linux_repository=v9fs/linux \
             -f linux_ref="${tag}" \
-            -f release_tag="kernel-${tag}"
+            -f release_tag="kernel-${tag}" \
+            -f also_latest=true
 
   publish-upstream-tip:
     needs: sync
