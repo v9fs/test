@@ -6,15 +6,16 @@ name: Sync torvalds/linux into v9fs/linux
 # Strategy (intentionally light — no full torvalds clone/tag mirror):
 #   1. gh repo sync brings torvalds master objects onto v9fs/linux:master
 #   2. Fast-forward v9fs/linux:upstream to that same SHA (canonical mirror branch)
-#   3. Sync only newly seen v* tags (ls-remote diff + per-tag fetch/push)
+#   3. Track newly seen v6+ tags (no pre-v6 backfill)
+#   4. Build/test publish only for the single newest v6+ tag (when it is new)
 
 on:
   schedule:
     - cron: "23 */6 * * *"
   workflow_dispatch:
     inputs:
-      publish_new_tags:
-        description: "Run kernel Image publish for each newly synced v* tag"
+      publish_latest_tag:
+        description: "Publish/test Image for the newest v6+ tag (default on schedule when that tag is newly synced)"
         type: boolean
         default: true
       publish_upstream_tip:
@@ -34,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       new_tags: ${{ steps.mirror.outputs.new_tags }}
+      latest_tag: ${{ steps.mirror.outputs.latest_tag }}
+      publish_tag: ${{ steps.mirror.outputs.publish_tag }}
       upstream_sha: ${{ steps.mirror.outputs.upstream_sha }}
     steps:
       - name: Require V9FS_LINUX_SYNC_TOKEN
@@ -56,7 +59,7 @@ jobs:
           }
           gh --version
 
-      - name: Sync upstream branch + new v* tags
+      - name: Sync upstream branch + track new v6+ tags
         id: mirror
         env:
           GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
@@ -64,9 +67,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          major_ge_6() {
+            # v6, v6.18, v6.18-rc1, v7.0, ...
+            local maj
+            maj=$(printf '%s' "$1" | sed -E 's/^v([0-9]+).*/\1/')
+            [[ "${maj}" =~ ^[0-9]+$ ]] && [ "${maj}" -ge 6 ]
+          }
+
           # --- Branch: GitHub fork sync (v9fs/linux is a fork of torvalds/linux) ---
-          # gh repo sync / merge-upstream requires the branch to already exist on the
-          # fork. torvalds uses master; we keep upstream as the canonical mirror name.
           if ! gh api "repos/v9fs/linux/git/ref/heads/master" >/dev/null 2>&1; then
             seed_sha=$(gh api "repos/v9fs/linux/git/ref/heads/upstream" --jq .object.sha)
             echo "Creating missing refs/heads/master from upstream @ ${seed_sha}"
@@ -86,10 +94,9 @@ jobs:
             -f sha="${upstream_sha}" \
             -F force=false
 
-          # --- Tags: only missing recent v* (no full history backfill) ---
-          # First page of /tags is newest-first; enough for cron catch-up of new releases.
+          # --- Tags: track new v6+ only; never backfill pre-v6 ---
           before_tags="$(mktemp)"
-          recent_tags="$(mktemp)"
+          candidates="$(mktemp)"
           new_tags_file="$(mktemp)"
 
           git ls-remote --tags https://github.com/v9fs/linux.git 'v*' \
@@ -97,17 +104,24 @@ jobs:
             | sed -e 's#refs/tags/##' -e 's#\^{}$##' \
             | sort -u > "${before_tags}" || true
 
-          gh api "repos/torvalds/linux/tags?per_page=40" --jq '.[].name' \
-            | grep -E '^v[0-9]' \
-            | sort -u > "${recent_tags}"
+          # Newest-first page is enough to discover new releases going forward.
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            major_ge_6 "${tag}" || continue
+            printf '%s\n' "${tag}"
+          done < <(gh api "repos/torvalds/linux/tags?per_page=40" --jq '.[].name') \
+            | sort -u > "${candidates}"
 
           : > "${new_tags_file}"
           while IFS= read -r tag; do
             [ -n "${tag}" ] || continue
             if ! grep -qxF "${tag}" "${before_tags}"; then
-              echo "${tag}" >> "${new_tags_file}"
+              printf '%s\n' "${tag}" >> "${new_tags_file}"
             fi
-          done < "${recent_tags}"
+          done < "${candidates}"
+
+          latest_tag=$(sort -V "${candidates}" | tail -n1 || true)
+          echo "latest v6+ tag on torvalds (from recent window): ${latest_tag:-<none>}"
 
           work="${RUNNER_TEMP}/tag-sync"
           mkdir -p "${work}"
@@ -118,7 +132,7 @@ jobs:
 
           while IFS= read -r tag; do
             [ -n "${tag}" ] || continue
-            echo "Syncing new tag ${tag}"
+            echo "Tracking new tag ${tag}"
             peeled=$(git ls-remote https://github.com/torvalds/linux.git "refs/tags/${tag}^{}" | awk '{print $1}')
             if [ -z "${peeled}" ]; then
               peeled=$(git ls-remote https://github.com/torvalds/linux.git "refs/tags/${tag}" | awk '{print $1}')
@@ -139,18 +153,34 @@ jobs:
             fi
           done < "${new_tags_file}"
 
+          # Build/test only the newest tag, and only when it was newly tracked this run
+          # (schedule) or when workflow_dispatch asks to publish.
+          publish_tag=""
+          if [ -n "${latest_tag}" ] && grep -qxF "${latest_tag}" "${new_tags_file}"; then
+            publish_tag="${latest_tag}"
+          fi
+
           new_tags=$(tr '\n' ' ' < "${new_tags_file}" | sed 's/[[:space:]]*$//')
           {
             echo "new_tags=${new_tags}"
+            echo "latest_tag=${latest_tag}"
+            echo "publish_tag=${publish_tag}"
             echo "upstream_sha=${upstream_sha}"
           } >> "${GITHUB_OUTPUT}"
 
           echo "v9fs/linux upstream @ ${upstream_sha}"
-          echo "new tags: ${new_tags:-<none>}"
+          echo "new v6+ tags tracked: ${new_tags:-<none>}"
+          echo "publish_tag (newest, if new): ${publish_tag:-<none>}"
 
-  publish-new-tags:
+  publish-latest-tag:
     needs: sync
-    if: needs.sync.outputs.new_tags != ''
+    # Schedule: only when the newest v6+ tag was newly tracked this run.
+    # Dispatch: when publish_latest_tag is true and we know a latest_tag.
+    if: >-
+      needs.sync.outputs.latest_tag != '' && (
+        needs.sync.outputs.publish_tag != '' ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_latest_tag)
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Ensure GitHub CLI
@@ -161,25 +191,24 @@ jobs:
             sudo apt-get install -y --no-install-recommends gh
           }
 
-      - name: Trigger Image publish for each new tag
+      - name: Trigger Image publish for newest v6+ tag only
         env:
           GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
-          NEW_TAGS: ${{ needs.sync.outputs.new_tags }}
-          DO_PUBLISH: ${{ github.event_name == 'schedule' && 'true' || inputs.publish_new_tags }}
+          LATEST_TAG: ${{ needs.sync.outputs.latest_tag }}
+          NEW_PUBLISH_TAG: ${{ needs.sync.outputs.publish_tag }}
         run: |
           set -euo pipefail
-          if [ "${DO_PUBLISH}" != "true" ]; then
-            echo "publish_new_tags disabled; synced tags only."
-            exit 0
+          # Prefer the newly appeared tip; otherwise (manual dispatch) use latest_tag.
+          tag="${NEW_PUBLISH_TAG:-}"
+          if [ -z "${tag}" ]; then
+            tag="${LATEST_TAG}"
           fi
-          for tag in ${NEW_TAGS}; do
-            echo "publish: linux_ref=${tag} release_tag=kernel-${tag}"
-            gh workflow run "Publish Linux kernel (arm64 Image)" \
-              --repo "${{ github.repository }}" \
-              -f linux_repository=v9fs/linux \
-              -f linux_ref="${tag}" \
-              -f release_tag="kernel-${tag}"
-          done
+          echo "publish: linux_ref=${tag} release_tag=kernel-${tag}"
+          gh workflow run "Publish Linux kernel (arm64 Image)" \
+            --repo "${{ github.repository }}" \
+            -f linux_repository=v9fs/linux \
+            -f linux_ref="${tag}" \
+            -f release_tag="kernel-${tag}"
 
   publish-upstream-tip:
     needs: sync
