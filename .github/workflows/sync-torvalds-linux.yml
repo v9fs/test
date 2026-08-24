@@ -1,0 +1,162 @@
+name: Sync torvalds/linux into v9fs/linux
+
+# Lives in v9fs/test only (see #15). Writes refs/tags on v9fs/linux — never
+# workflow files — so the kernel mirror stays rebase-clean vs torvalds/linux.
+
+on:
+  schedule:
+    # Tag releases are infrequent; six-hourly is enough to catch v* tags.
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      publish_new_tags:
+        description: "Run kernel Image publish for each newly synced v* tag"
+        type: boolean
+        default: true
+      publish_upstream_tip:
+        description: "Also publish kernel-main from v9fs/linux upstream tip"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-torvalds-linux
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tags: ${{ steps.mirror.outputs.new_tags }}
+      upstream_sha: ${{ steps.mirror.outputs.upstream_sha }}
+    steps:
+      - name: Require V9FS_LINUX_SYNC_TOKEN
+        env:
+          TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::Missing secret V9FS_LINUX_SYNC_TOKEN"
+            echo "Create a fine-grained PAT (or GitHub App token) with:"
+            echo "  - v9fs/linux: Contents Read and Write (push refs/tags)"
+            echo "  - v9fs/test: Actions Read and Write (workflow_run / gh workflow run)"
+            echo "Store it as repo or org secret V9FS_LINUX_SYNC_TOKEN."
+            exit 1
+          fi
+
+      - name: Mirror torvalds master + new v* tags into v9fs/linux
+        id: mirror
+        env:
+          TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          git version
+
+          work="${RUNNER_TEMP}/linux-mirror"
+          mkdir -p "${work}"
+          git init --bare "${work}/linux.git"
+          cd "${work}/linux.git"
+
+          git remote add torvalds https://github.com/torvalds/linux.git
+          git remote add v9fs "https://x-access-token:${TOKEN}@github.com/v9fs/linux.git"
+
+          before_tags="$(mktemp)"
+          after_tags="$(mktemp)"
+          new_tags_file="$(mktemp)"
+
+          git ls-remote --tags v9fs 'v*' \
+            | awk '{print $2}' \
+            | sed -e 's#refs/tags/##' -e 's#\^{}$##' \
+            | sort -u > "${before_tags}" || true
+
+          # Fast-forward-only update of the clean upstream mirror branch.
+          git fetch --no-tags torvalds master:refs/remotes/torvalds/master
+          upstream_sha=$(git rev-parse refs/remotes/torvalds/master)
+          git push v9fs refs/remotes/torvalds/master:refs/heads/upstream
+
+          # Fetch v* tags from torvalds; push only those missing on v9fs/linux.
+          git fetch --no-tags torvalds 'refs/tags/v*:refs/tags/v*'
+          git show-ref --tags \
+            | awk '/refs\/tags\/v/ {print $2}' \
+            | sed -e 's#refs/tags/##' -e 's#\^{}$##' \
+            | sort -u > "${after_tags}"
+
+          comm -13 "${before_tags}" "${after_tags}" > "${new_tags_file}" || true
+
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            echo "Pushing new tag ${tag}"
+            git push v9fs "refs/tags/${tag}:refs/tags/${tag}"
+          done < "${new_tags_file}"
+
+          # Space-separated list for the follow-on job (rare; usually 0–1 tags).
+          new_tags=$(tr '\n' ' ' < "${new_tags_file}" | sed 's/[[:space:]]*$//')
+
+          {
+            echo "new_tags=${new_tags}"
+            echo "upstream_sha=${upstream_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+          echo "torvalds master -> v9fs/linux upstream @ ${upstream_sha}"
+          echo "new tags: ${new_tags:-<none>}"
+
+  publish-new-tags:
+    needs: sync
+    if: needs.sync.outputs.new_tags != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure GitHub CLI
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gh
+          }
+          gh --version
+
+      - name: Trigger Image publish for each new tag
+        env:
+          # GITHUB_TOKEN cannot chain into new workflow runs; use the sync PAT.
+          GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+          NEW_TAGS: ${{ needs.sync.outputs.new_tags }}
+          DO_PUBLISH: ${{ github.event_name == 'schedule' && 'true' || inputs.publish_new_tags }}
+        run: |
+          set -euo pipefail
+          if [ "${DO_PUBLISH}" != "true" ]; then
+            echo "publish_new_tags disabled; synced tags only."
+            exit 0
+          fi
+          for tag in ${NEW_TAGS}; do
+            echo "workflow_run publish: linux_ref=${tag} release_tag=kernel-${tag}"
+            gh workflow run "Publish Linux kernel (arm64 Image)" \
+              --repo "${{ github.repository }}" \
+              -f linux_repository=v9fs/linux \
+              -f linux_ref="${tag}" \
+              -f release_tag="kernel-${tag}"
+          done
+
+  publish-upstream-tip:
+    needs: sync
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_upstream_tip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure GitHub CLI
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gh
+          }
+
+      - name: Trigger Image publish for upstream as kernel-main
+        env:
+          GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run "Publish Linux kernel (arm64 Image)" \
+            --repo "${{ github.repository }}" \
+            -f linux_repository=v9fs/linux \
+            -f linux_ref=upstream \
+            -f release_tag=kernel-main
