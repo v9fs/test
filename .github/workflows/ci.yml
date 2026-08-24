@@ -5,16 +5,92 @@ on:
   workflow_dispatch:
     inputs:
       kernel_release:
-        description: 'Release tag that provides arm64 Image (default: kernel-main)'
+        description: "Release tag that provides arm64 Image (default: kernel-latest)"
         required: true
-        default: 'kernel-main'
+        default: "kernel-latest"
         type: string
+      linux_ref:
+        description: "Optional linux git ref label for reports (e.g. v7.2)"
+        required: false
+        default: ""
+        type: string
+  workflow_run:
+    workflows: ["Publish Linux kernel (arm64 Image)"]
+    types: [completed]
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: harness-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
+  resolve:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      kernel_release: ${{ steps.out.outputs.kernel_release }}
+      linux_ref: ${{ steps.out.outputs.linux_ref }}
+      should_run: ${{ steps.out.outputs.should_run }}
+    steps:
+      - name: Resolve kernel release
+        id: out
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            kr="${{ inputs.kernel_release }}"
+            lr="${{ inputs.linux_ref }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Tip publishes refresh kernel-latest; use that floating Image.
+            kr="kernel-latest"
+            lr=""
+            # Best-effort: parse concrete tag from the publish run display title / jobs.
+            pub_id="${{ github.event.workflow_run.id }}"
+            title="$(gh run view "$pub_id" --repo "${{ github.repository }}" --json displayTitle --jq .displayTitle || true)"
+            echo "triggering publish: $title"
+          else
+            # push: exercise harness against current tip Image when present.
+            kr="kernel-latest"
+            lr=""
+          fi
+
+          should_run=true
+          if ! gh release view "$kr" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $kr not found yet"
+            if [ "${{ github.event_name }}" = "push" ]; then
+              should_run=false
+            else
+              echo "::error::Required release $kr is missing"
+              exit 1
+            fi
+          fi
+
+          # Derive linux_ref from release notes / tag name when possible.
+          if [ -z "${lr}" ] && [ "$kr" != "kernel-latest" ] && [[ "$kr" == kernel-v* ]]; then
+            lr="${kr#kernel-}"
+          fi
+          if [ -z "${lr}" ] && [ "$kr" = "kernel-latest" ]; then
+            notes="$(gh release view kernel-latest --repo "${{ github.repository }}" --json body --jq .body || true)"
+            # Notes look like: Floating latest Image (currently v7.2 / kernel-v7.2).
+            lr="$(printf '%s\n' "$notes" | sed -n 's/.*currently \([^ /]*\).*/\1/p' | head -1 || true)"
+          fi
+
+          {
+            echo "kernel_release=${kr}"
+            echo "linux_ref=${lr}"
+            echo "should_run=${should_run}"
+          } >> "$GITHUB_OUTPUT"
+          echo "kernel_release=${kr} linux_ref=${lr} should_run=${should_run}"
+
   tests:
+    needs: resolve
+    if: needs.resolve.outputs.should_run == 'true'
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
@@ -28,7 +104,7 @@ jobs:
           - qemu-9p2000.L
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      KERNEL_RELEASE: ${{ inputs.kernel_release || 'kernel-main' }}
+      KERNEL_RELEASE: ${{ needs.resolve.outputs.kernel_release }}
       V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:latest
     steps:
       - name: Checkout harness
@@ -97,3 +173,59 @@ jobs:
           path: logs
           retention-days: 7
 
+  report:
+    needs: [resolve, tests]
+    if: always() && needs.resolve.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Ensure GitHub CLI
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gh
+          }
+
+      - name: Build results.json, diff, wiki dashboard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WIKI_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+          KERNEL_RELEASE: ${{ needs.resolve.outputs.kernel_release }}
+          LINUX_REF: ${{ needs.resolve.outputs.linux_ref }}
+          OUTDIR: report-out
+        run: |
+          set -euo pipefail
+          mkdir -p report-out
+          ./scripts/v9fs-ci-report
+          ls -la report-out
+
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tip-regression-report
+          path: report-out
+          retention-days: 30
+
+      - name: Attach results.json to kernel-latest (best-effort)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ ! -f report-out/results.json ]; then
+            echo "no results.json"
+            exit 0
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "V9FS_LINUX_SYNC_TOKEN unset; skip release attach"
+            exit 0
+          fi
+          gh release view kernel-latest >/dev/null 2>&1 || exit 0
+          gh release upload kernel-latest report-out/results.json report-out/diff-report.md --clobber || true
