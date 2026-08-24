@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Fix sync workflow: ensure fork `master` exists before `gh repo sync`, then FF canonical `upstream` (merge-upstream 404'd without `master`).
 - Revise `sync-torvalds-linux.yml` to use `gh repo sync` for `master` objects, fast-forward canonical `upstream`, and sync only newly missing recent `v*` tags (no full torvalds tag mirror).
 - Add `sync-torvalds-linux.yml`: cron/`workflow_dispatch` mirrors `torvalds/linux` `master` → `v9fs/linux` `upstream` and newly seen `v*` tags from `v9fs/test` only (no CI files in the kernel tree; see #15). New tags can trigger `linux-kernel-publish.yml` via `gh workflow run` using `V9FS_LINUX_SYNC_TOKEN`.
 - Clean-slate rework started; prior implementation preserved under `old/rework-take-1/` (tag `rework-take-1`).

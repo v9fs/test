@@ -64,26 +64,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          # --- Branch: objects via gh repo sync (matching branch name = master) ---
-          # torvalds default is master; gh repo sync updates destination's master.
-          echo "gh repo sync v9fs/linux <- torvalds/linux (master)"
-          gh repo sync v9fs/linux --source torvalds/linux --branch master
+          # --- Branch: GitHub fork sync (v9fs/linux is a fork of torvalds/linux) ---
+          # gh repo sync / merge-upstream requires the branch to already exist on the
+          # fork. torvalds uses master; we keep upstream as the canonical mirror name.
+          if ! gh api "repos/v9fs/linux/git/ref/heads/master" >/dev/null 2>&1; then
+            seed_sha=$(gh api "repos/v9fs/linux/git/ref/heads/upstream" --jq .object.sha)
+            echo "Creating missing refs/heads/master from upstream @ ${seed_sha}"
+            gh api --method POST "repos/v9fs/linux/git/refs" \
+              -f ref="refs/heads/master" \
+              -f sha="${seed_sha}"
+          fi
+
+          echo "gh repo sync v9fs/linux master <- torvalds/linux (parent)"
+          gh repo sync v9fs/linux --branch master
 
           upstream_sha=$(gh api repos/v9fs/linux/commits/master --jq .sha)
           echo "master @ ${upstream_sha}"
 
-          # Canonical mirror name for this org is upstream — FF to the synced tip.
-          if gh api "repos/v9fs/linux/git/ref/heads/upstream" >/dev/null 2>&1; then
-            echo "Fast-forward refs/heads/upstream -> ${upstream_sha}"
-            gh api --method PATCH "repos/v9fs/linux/git/refs/heads/upstream" \
-              -f sha="${upstream_sha}" \
-              -F force=false
-          else
-            echo "Create refs/heads/upstream -> ${upstream_sha}"
-            gh api --method POST "repos/v9fs/linux/git/refs" \
-              -f ref="refs/heads/upstream" \
-              -f sha="${upstream_sha}"
-          fi
+          echo "Fast-forward refs/heads/upstream -> ${upstream_sha}"
+          gh api --method PATCH "repos/v9fs/linux/git/refs/heads/upstream" \
+            -f sha="${upstream_sha}" \
+            -F force=false
 
           # --- Tags: only missing recent v* (no full history backfill) ---
           # First page of /tags is newest-first; enough for cron catch-up of new releases.
