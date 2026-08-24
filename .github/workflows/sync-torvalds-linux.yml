@@ -1,11 +1,15 @@
 name: Sync torvalds/linux into v9fs/linux
 
-# Lives in v9fs/test only (see #15). Writes refs/tags on v9fs/linux — never
-# workflow files — so the kernel mirror stays rebase-clean vs torvalds/linux.
+# Lives in v9fs/test only (see #15). Updates refs/tags on v9fs/linux only —
+# never workflow files — so the kernel mirror stays rebase-clean.
+#
+# Strategy (intentionally light — no full torvalds clone/tag mirror):
+#   1. gh repo sync brings torvalds master objects onto v9fs/linux:master
+#   2. Fast-forward v9fs/linux:upstream to that same SHA (canonical mirror branch)
+#   3. Sync only newly seen v* tags (ls-remote diff + per-tag fetch/push)
 
 on:
   schedule:
-    # Tag releases are infrequent; six-hourly is enough to catch v* tags.
     - cron: "23 */6 * * *"
   workflow_dispatch:
     inputs:
@@ -39,67 +43,108 @@ jobs:
           set -euo pipefail
           if [ -z "${TOKEN}" ]; then
             echo "::error::Missing secret V9FS_LINUX_SYNC_TOKEN"
-            echo "Create a fine-grained PAT (or GitHub App token) with:"
-            echo "  - v9fs/linux: Contents Read and Write (push refs/tags)"
-            echo "  - v9fs/test: Actions Read and Write (workflow_run / gh workflow run)"
-            echo "Store it as repo or org secret V9FS_LINUX_SYNC_TOKEN."
+            echo "Need Contents R/W on v9fs/linux and Actions on v9fs/test."
             exit 1
           fi
 
-      - name: Mirror torvalds master + new v* tags into v9fs/linux
+      - name: Ensure GitHub CLI
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gh
+          }
+          gh --version
+
+      - name: Sync upstream branch + new v* tags
         id: mirror
         env:
+          GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
           TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
         run: |
           set -euo pipefail
-          git version
 
-          work="${RUNNER_TEMP}/linux-mirror"
-          mkdir -p "${work}"
-          git init --bare "${work}/linux.git"
-          cd "${work}/linux.git"
+          # --- Branch: objects via gh repo sync (matching branch name = master) ---
+          # torvalds default is master; gh repo sync updates destination's master.
+          echo "gh repo sync v9fs/linux <- torvalds/linux (master)"
+          gh repo sync v9fs/linux --source torvalds/linux --branch master
 
-          git remote add torvalds https://github.com/torvalds/linux.git
-          git remote add v9fs "https://x-access-token:${TOKEN}@github.com/v9fs/linux.git"
+          upstream_sha=$(gh api repos/v9fs/linux/commits/master --jq .sha)
+          echo "master @ ${upstream_sha}"
 
+          # Canonical mirror name for this org is upstream — FF to the synced tip.
+          if gh api "repos/v9fs/linux/git/ref/heads/upstream" >/dev/null 2>&1; then
+            echo "Fast-forward refs/heads/upstream -> ${upstream_sha}"
+            gh api --method PATCH "repos/v9fs/linux/git/refs/heads/upstream" \
+              -f sha="${upstream_sha}" \
+              -F force=false
+          else
+            echo "Create refs/heads/upstream -> ${upstream_sha}"
+            gh api --method POST "repos/v9fs/linux/git/refs" \
+              -f ref="refs/heads/upstream" \
+              -f sha="${upstream_sha}"
+          fi
+
+          # --- Tags: only missing recent v* (no full history backfill) ---
+          # First page of /tags is newest-first; enough for cron catch-up of new releases.
           before_tags="$(mktemp)"
-          after_tags="$(mktemp)"
+          recent_tags="$(mktemp)"
           new_tags_file="$(mktemp)"
 
-          git ls-remote --tags v9fs 'v*' \
+          git ls-remote --tags https://github.com/v9fs/linux.git 'v*' \
             | awk '{print $2}' \
             | sed -e 's#refs/tags/##' -e 's#\^{}$##' \
             | sort -u > "${before_tags}" || true
 
-          # Fast-forward-only update of the clean upstream mirror branch.
-          git fetch --no-tags torvalds master:refs/remotes/torvalds/master
-          upstream_sha=$(git rev-parse refs/remotes/torvalds/master)
-          git push v9fs refs/remotes/torvalds/master:refs/heads/upstream
+          gh api "repos/torvalds/linux/tags?per_page=40" --jq '.[].name' \
+            | grep -E '^v[0-9]' \
+            | sort -u > "${recent_tags}"
 
-          # Fetch v* tags from torvalds; push only those missing on v9fs/linux.
-          git fetch --no-tags torvalds 'refs/tags/v*:refs/tags/v*'
-          git show-ref --tags \
-            | awk '/refs\/tags\/v/ {print $2}' \
-            | sed -e 's#refs/tags/##' -e 's#\^{}$##' \
-            | sort -u > "${after_tags}"
+          : > "${new_tags_file}"
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            if ! grep -qxF "${tag}" "${before_tags}"; then
+              echo "${tag}" >> "${new_tags_file}"
+            fi
+          done < "${recent_tags}"
 
-          comm -13 "${before_tags}" "${after_tags}" > "${new_tags_file}" || true
+          work="${RUNNER_TEMP}/tag-sync"
+          mkdir -p "${work}"
+          git init --bare "${work}/linux.git"
+          cd "${work}/linux.git"
+          git remote add torvalds https://github.com/torvalds/linux.git
+          git remote add v9fs "https://x-access-token:${TOKEN}@github.com/v9fs/linux.git"
 
           while IFS= read -r tag; do
             [ -n "${tag}" ] || continue
-            echo "Pushing new tag ${tag}"
-            git push v9fs "refs/tags/${tag}:refs/tags/${tag}"
+            echo "Syncing new tag ${tag}"
+            peeled=$(git ls-remote https://github.com/torvalds/linux.git "refs/tags/${tag}^{}" | awk '{print $1}')
+            if [ -z "${peeled}" ]; then
+              peeled=$(git ls-remote https://github.com/torvalds/linux.git "refs/tags/${tag}" | awk '{print $1}')
+            fi
+            created=false
+            if [ -n "${peeled}" ] && gh api "repos/v9fs/linux/git/commits/${peeled}" >/dev/null 2>&1; then
+              if gh api --method POST "repos/v9fs/linux/git/refs" \
+                  -f ref="refs/tags/${tag}" \
+                  -f sha="${peeled}"; then
+                echo "  API created refs/tags/${tag} -> ${peeled}"
+                created=true
+              fi
+            fi
+            if [ "${created}" != "true" ]; then
+              echo "  fetch/push single tag ${tag}"
+              git fetch --no-tags torvalds "refs/tags/${tag}:refs/tags/${tag}"
+              git push v9fs "refs/tags/${tag}:refs/tags/${tag}"
+            fi
           done < "${new_tags_file}"
 
-          # Space-separated list for the follow-on job (rare; usually 0–1 tags).
           new_tags=$(tr '\n' ' ' < "${new_tags_file}" | sed 's/[[:space:]]*$//')
-
           {
             echo "new_tags=${new_tags}"
             echo "upstream_sha=${upstream_sha}"
           } >> "${GITHUB_OUTPUT}"
 
-          echo "torvalds master -> v9fs/linux upstream @ ${upstream_sha}"
+          echo "v9fs/linux upstream @ ${upstream_sha}"
           echo "new tags: ${new_tags:-<none>}"
 
   publish-new-tags:
@@ -114,11 +159,9 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y --no-install-recommends gh
           }
-          gh --version
 
       - name: Trigger Image publish for each new tag
         env:
-          # GITHUB_TOKEN cannot chain into new workflow runs; use the sync PAT.
           GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
           NEW_TAGS: ${{ needs.sync.outputs.new_tags }}
           DO_PUBLISH: ${{ github.event_name == 'schedule' && 'true' || inputs.publish_new_tags }}
@@ -129,7 +172,7 @@ jobs:
             exit 0
           fi
           for tag in ${NEW_TAGS}; do
-            echo "workflow_run publish: linux_ref=${tag} release_tag=kernel-${tag}"
+            echo "publish: linux_ref=${tag} release_tag=kernel-${tag}"
             gh workflow run "Publish Linux kernel (arm64 Image)" \
               --repo "${{ github.repository }}" \
               -f linux_repository=v9fs/linux \
