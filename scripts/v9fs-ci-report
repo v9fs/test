@@ -7,24 +7,40 @@
 #   KERNEL_RELEASE (e.g. kernel-latest or kernel-v7.2)
 #   LINUX_REF (optional)
 #   WIKI_TOKEN (optional; if set, push Regression-Dashboard.md to repo wiki)
+#   OUTDIR (optional; default .)
+#   JOBS_JSON (optional path; default fetched via gh run view)
 set -euo pipefail
 
-repo="${GITHUB_REPOSITORY:?}"
-run_id="${GITHUB_RUN_ID:?}"
-kernel_release="${KERNEL_RELEASE:?}"
-linux_ref="${LINUX_REF:-}"
-run_url="https://github.com/${repo}/actions/runs/${run_id}"
-generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-outdir="${OUTDIR:-.}"
-mkdir -p "${outdir}"
+export GITHUB_REPOSITORY="${GITHUB_REPOSITORY:?}"
+export GITHUB_RUN_ID="${GITHUB_RUN_ID:?}"
+export KERNEL_RELEASE="${KERNEL_RELEASE:?}"
+export LINUX_REF="${LINUX_REF:-}"
+export OUTDIR="${OUTDIR:-.}"
+export WIKI_TOKEN="${WIKI_TOKEN:-}"
 
-jobs_json="$(mktemp)"
-gh run view "${run_id}" --repo "${repo}" --json jobs > "${jobs_json}"
+mkdir -p "${OUTDIR}"
 
-python3 - <<PY
-import json, os, re, pathlib, shutil, subprocess, tempfile
+jobs_json="${JOBS_JSON:-}"
+if [ -z "${jobs_json}" ]; then
+  jobs_json="$(mktemp)"
+  gh run view "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json jobs > "${jobs_json}"
+fi
+export JOBS_JSON="${jobs_json}"
 
-data = json.load(open("${jobs_json}"))
+python3 - <<'PY'
+import json, os, pathlib, re, shutil, subprocess, tempfile
+from datetime import datetime, timezone
+
+repo = os.environ["GITHUB_REPOSITORY"]
+run_id = int(os.environ["GITHUB_RUN_ID"])
+kernel_release = os.environ["KERNEL_RELEASE"]
+linux_ref = os.environ.get("LINUX_REF") or ""
+outdir = pathlib.Path(os.environ.get("OUTDIR") or ".")
+wiki_token = (os.environ.get("WIKI_TOKEN") or "").strip()
+run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
+generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+data = json.loads(pathlib.Path(os.environ["JOBS_JSON"]).read_text())
 job_list = data.get("jobs", [])
 
 suites = {}
@@ -33,7 +49,6 @@ for job in job_list:
     m = pat.match(job.get("name") or "")
     if not m:
         continue
-    suite = m.group(1)
     conclusion = job.get("conclusion") or job.get("status") or "unknown"
     if conclusion == "success":
         status = "pass"
@@ -43,19 +58,18 @@ for job in job_list:
         status = "fail"
     else:
         status = str(conclusion)
-    suites[suite] = {"status": status, "xfail": False}
+    suites[m.group(1)] = {"status": status, "xfail": False}
 
 payload = {
-    "kernel_release": "${kernel_release}",
-    "linux_ref": "${linux_ref}",
-    "kernel_latest": ("${kernel_release}" == "kernel-latest") or "${kernel_release}".startswith("kernel-v"),
-    "run_url": "${run_url}",
-    "run_id": int("${run_id}"),
-    "generated_at": "${generated_at}",
+    "kernel_release": kernel_release,
+    "linux_ref": linux_ref,
+    "kernel_latest": kernel_release == "kernel-latest" or kernel_release.startswith("kernel-v"),
+    "run_url": run_url,
+    "run_id": run_id,
+    "generated_at": generated_at,
     "suites": dict(sorted(suites.items())),
 }
 
-outdir = pathlib.Path("${outdir}")
 results_path = outdir / "results.json"
 results_path.write_text(json.dumps(payload, indent=2) + "\n")
 print(f"wrote {results_path} suites={list(payload['suites'])}")
@@ -66,30 +80,30 @@ try:
     td = tempfile.mkdtemp()
     r = subprocess.run(
         ["gh", "release", "download", "kernel-latest", "-p", "results.json", "-D", td, "--clobber"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     prev_path = pathlib.Path(td) / "results.json"
     if r.returncode == 0 and prev_path.exists():
-        prev = json.loads(prev_path.read_text())
-        # Ignore self if same run_id
-        if prev.get("run_id") == payload["run_id"]:
-            prev = None
-        else:
+        cand = json.loads(prev_path.read_text())
+        if cand.get("run_id") != run_id:
+            prev = cand
             prev_label = prev.get("linux_ref") or prev.get("kernel_release") or "previous"
     shutil.rmtree(td, ignore_errors=True)
 except Exception as e:
     print(f"note: no previous results.json ({e})")
 
-lines = []
-lines.append(f"# v9fs tip regression")
-lines.append("")
-lines.append(f"- current: `{payload.get('linux_ref') or payload['kernel_release']}` ({payload['kernel_release']})")
-lines.append(f"- run: {payload['run_url']}")
-lines.append(f"- generated: {payload['generated_at']}")
-lines.append("")
-lines.append(f"| Suite | Status | vs {prev_label} |")
-lines.append("| --- | --- | --- |")
-
+tip = payload.get("linux_ref") or payload["kernel_release"]
+lines = [
+    "# v9fs tip regression",
+    "",
+    f"- current: `{tip}` ({payload['kernel_release']})",
+    f"- run: {payload['run_url']}",
+    f"- generated: {payload['generated_at']}",
+    "",
+    f"| Suite | Status | vs {prev_label} |",
+    "| --- | --- | --- |",
+]
 prev_suites = (prev or {}).get("suites") or {}
 for suite, info in payload["suites"].items():
     cur = info.get("status", "?")
@@ -110,70 +124,70 @@ diff_path = outdir / "diff-report.md"
 diff_path.write_text("\n".join(lines) + "\n")
 print(f"wrote {diff_path}")
 
-wiki = os.environ.get("WIKI_TOKEN", "").strip()
-if wiki:
-    owner, name = "${repo}".split("/", 1)
-    wiki_url = f"https://x-access-token:{wiki}@github.com/{owner}/{name}.wiki.git"
-    wdir = tempfile.mkdtemp(prefix="v9fs-wiki-")
-    try:
-        clone = subprocess.run(["git", "clone", "--depth=1", wiki_url, wdir], capture_output=True, text=True)
-        if clone.returncode != 0:
-            print("wiki clone failed; initializing new wiki checkout")
-            print(clone.stderr)
-            shutil.rmtree(wdir, ignore_errors=True)
-            pathlib.Path(wdir).mkdir(parents=True, exist_ok=True)
-            subprocess.check_call(["git", "init"], cwd=wdir)
-            subprocess.check_call(["git", "remote", "add", "origin", wiki_url], cwd=wdir)
-        dash = pathlib.Path(wdir) / "Regression-Dashboard.md"
-        tip = payload.get("linux_ref") or payload["kernel_release"]
-        body = []
-        body.append("# v9fs regression dashboard")
-        body.append("")
-        body.append(
-            f"Last tip: `{tip}` — "
-            f"[`{payload['kernel_release']}`](https://github.com/${repo}/releases/tag/{payload['kernel_release']}) / "
-            f"[`kernel-latest`](https://github.com/${repo}/releases/tag/kernel-latest) — "
-            f"[run]({payload['run_url']})"
-        )
-        body.append("")
-        body.append(f"| Suite | Status | vs previous tip (`{prev_label}`) | Notes |")
-        body.append("| --- | --- | --- | --- |")
-        for suite, info in payload["suites"].items():
-            cur = info.get("status", "?")
-            old = (prev_suites.get(suite) or {}).get("status")
-            if old is None:
-                delta = "new"
-            elif old == cur:
-                delta = "—"
-            elif old == "pass" and cur == "fail":
-                delta = "regressed"
-            elif old == "fail" and cur == "pass":
-                delta = "improved"
-            else:
-                delta = f"{old}→{cur}"
-            note = "xfail baseline" if info.get("xfail") else ""
-            body.append(f"| {suite} | {cur} | {delta} | {note} |")
-        body.append("")
-        body.append(f"Updated: {payload['generated_at']}")
-        dash.write_text("\n".join(body) + "\n")
-        subprocess.check_call(["git", "config", "user.email", "v9fs-ci@users.noreply.github.com"], cwd=wdir)
-        subprocess.check_call(["git", "config", "user.name", "v9fs-ci"], cwd=wdir)
-        subprocess.check_call(["git", "add", "Regression-Dashboard.md"], cwd=wdir)
-        st = subprocess.run(["git", "status", "--porcelain"], cwd=wdir, capture_output=True, text=True)
-        if st.stdout.strip():
-            subprocess.check_call(["git", "commit", "-m", f"ci: tip regression {tip}"], cwd=wdir)
-            push = subprocess.run(["git", "push", "-u", "origin", "HEAD:master"], cwd=wdir, capture_output=True, text=True)
-            if push.returncode != 0:
-                push = subprocess.run(["git", "push", "-u", "origin", "HEAD:main"], cwd=wdir, capture_output=True, text=True)
-            if push.returncode != 0:
-                print("wiki push failed:")
-                print(push.stderr)
-            else:
-                print("wiki dashboard updated")
-        else:
-            print("wiki unchanged")
-    finally:
-        shutil.rmtree(wdir, ignore_errors=True)
-else:
+if not wiki_token:
     print("WIKI_TOKEN unset; skipped wiki update")
+    raise SystemExit(0)
+
+owner, name = repo.split("/", 1)
+wiki_url = f"https://x-access-token:{wiki_token}@github.com/{owner}/{name}.wiki.git"
+wdir = tempfile.mkdtemp(prefix="v9fs-wiki-")
+try:
+    clone = subprocess.run(["git", "clone", "--depth=1", wiki_url, wdir], capture_output=True, text=True)
+    if clone.returncode != 0:
+        print("wiki clone failed; initializing new wiki checkout")
+        print(clone.stderr)
+        shutil.rmtree(wdir, ignore_errors=True)
+        pathlib.Path(wdir).mkdir(parents=True, exist_ok=True)
+        subprocess.check_call(["git", "init", "-b", "master"], cwd=wdir)
+        subprocess.check_call(["git", "remote", "add", "origin", wiki_url], cwd=wdir)
+
+    body = [
+        "# v9fs regression dashboard",
+        "",
+        (
+            f"Last tip: `{tip}` — "
+            f"[`{payload['kernel_release']}`](https://github.com/{repo}/releases/tag/{payload['kernel_release']}) / "
+            f"[`kernel-latest`](https://github.com/{repo}/releases/tag/kernel-latest) — "
+            f"[run]({payload['run_url']})"
+        ),
+        "",
+        f"| Suite | Status | vs previous tip (`{prev_label}`) | Notes |",
+        "| --- | --- | --- | --- |",
+    ]
+    for suite, info in payload["suites"].items():
+        cur = info.get("status", "?")
+        old = (prev_suites.get(suite) or {}).get("status")
+        if old is None:
+            delta = "new"
+        elif old == cur:
+            delta = "—"
+        elif old == "pass" and cur == "fail":
+            delta = "regressed"
+        elif old == "fail" and cur == "pass":
+            delta = "improved"
+        else:
+            delta = f"{old}→{cur}"
+        note = "xfail baseline" if info.get("xfail") else ""
+        body.append(f"| {suite} | {cur} | {delta} | {note} |")
+    body.extend(["", f"Updated: {payload['generated_at']}", ""])
+    (pathlib.Path(wdir) / "Regression-Dashboard.md").write_text("\n".join(body))
+
+    subprocess.check_call(["git", "config", "user.email", "v9fs-ci@users.noreply.github.com"], cwd=wdir)
+    subprocess.check_call(["git", "config", "user.name", "v9fs-ci"], cwd=wdir)
+    subprocess.check_call(["git", "add", "Regression-Dashboard.md"], cwd=wdir)
+    st = subprocess.run(["git", "status", "--porcelain"], cwd=wdir, capture_output=True, text=True)
+    if not st.stdout.strip():
+        print("wiki unchanged")
+    else:
+        subprocess.check_call(["git", "commit", "-m", f"ci: tip regression {tip}"], cwd=wdir)
+        push = subprocess.run(["git", "push", "-u", "origin", "HEAD:master"], cwd=wdir, capture_output=True, text=True)
+        if push.returncode != 0:
+            push = subprocess.run(["git", "push", "-u", "origin", "HEAD:main"], cwd=wdir, capture_output=True, text=True)
+        if push.returncode != 0:
+            print("wiki push failed:")
+            print(push.stderr)
+            raise SystemExit(1)
+        print("wiki dashboard updated")
+finally:
+    shutil.rmtree(wdir, ignore_errors=True)
 PY
