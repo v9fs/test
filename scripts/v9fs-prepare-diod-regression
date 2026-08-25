@@ -172,8 +172,8 @@ helper.write_text(h.replace(old_cleanup, new_cleanup, 1))
 print(f"patched {helper}")
 PY
 
-n_root=$(grep -c 'test_under_diod unixsocketroot' "${src}/t/"*.t || true)
-n_unix=$(grep -c 'test_under_diod unixsocket ' "${src}/t/"*.t || true)
+n_root=$(grep -h -c 'test_under_diod unixsocketroot' "${src}/t/"*.t 2>/dev/null | awk '{s+=$1} END {print s+0}')
+n_unix=$(grep -h -c 'test_under_diod unixsocket ' "${src}/t/"*.t 2>/dev/null | awk '{s+=$1} END {print s+0}')
 echo "diod harness patch: unixsocketroot=${n_root} remaining_unixsocket=${n_unix} stamp=${patch_stamp}"
 test "${n_unix}" = "0"
 grep -q 'diod-t0010-mount-debug' "${src}/t/t0010-v9fs-runasuser.t"
