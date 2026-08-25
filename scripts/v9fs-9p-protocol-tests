@@ -17,7 +17,7 @@ if [ -r /proc/config.gz ]; then
   cfg_out="/home/v9fs-test/test/logs/9p-kconfig.txt"
   mkdir -p "$(dirname "$cfg_out")"
   (zcat /proc/config.gz 2>/dev/null || gzip -dc /proc/config.gz 2>/dev/null || cat /proc/config.gz) \
-    | /usr/bin/grep -E '^(CONFIG_(NET_9P|9P|P9|VIRTIO_9P|NET_9P_VIRTIO|NET_9P_DEBUG|NET_9P_RDMA|NET_9P_XEN)|# CONFIG_(NET_9P|NET_9P_VIRTIO|NET_9P_RDMA) is not set)' \
+    | /usr/bin/grep -E '^(CONFIG_(NET_9P|9P|P9|VIRTIO_9P|NET_9P_FD|NET_9P_VIRTIO|NET_9P_DEBUG|NET_9P_RDMA|NET_9P_XEN)|# CONFIG_(NET_9P|NET_9P_FD|NET_9P_VIRTIO|NET_9P_RDMA) is not set)' \
     | sort -u \
     | tee "$cfg_out" || true
 else

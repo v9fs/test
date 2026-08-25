@@ -1,8 +1,12 @@
 ## Unreleased
 
+<<<<<<< HEAD
 - Fix `v9fs-ci-report` heredoc quoting so tip/wiki markdown renders correctly.
 
 
+=======
+- Build-in `NET_9P_FD` (and `UNIX`) on published Images so diod-regression `trans=unix` mounts work; arm64 defconfig left FD as `=m` while virtio was forced `=y`.
+>>>>>>> 46e2adf (ci: build-in NET_9P_FD for diod unix mounts)
 - Harness CI: default to `kernel-latest`, run on successful kernel publish (`workflow_run`), emit `results.json`/diff, update wiki `Regression-Dashboard`, and attach results to `kernel-latest`.
 - Add `scripts/v9fs-ci-report` and `scripts/v9fs-newest-v6-tag` (kernel-aware tip ordering: `v7.2` > `v7.2-rc7`).
 - Tag policy: track only new **v6+** tags; build/publish/test only the **single newest** v6+ tag; also refresh floating **`kernel-latest`** release alias alongside `kernel-<tag>`.
