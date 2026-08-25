@@ -82,7 +82,12 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           # The sharness tests expect helper binaries from src/cmd check_PROGRAMS.
           make -C src/cmd test_diodrun test_flock test_flock_single test_atomic_create test_pathwalk
 
+          mkdir -p /home/v9fs-test/test/logs
+          make_out="/home/v9fs-test/test/logs/diod-make.out"
+
           # These are the kernel v9fs client oriented tests.
+          # Tee console output so we can still eval XFAIL if timeout/TERM
+          # causes automake to delete t/*.log before writing test-suite.log.
           set +e
           timeout 15m make -C t check TESTS="\
             t0010-v9fs-runasuser.t \
@@ -91,12 +96,17 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
             t0013-v9fs-acl.t \
             t0020-dbench.t \
             t0021-postmark.t \
-          "
-          make_rc="$?"
+          " 2>&1 | tee "$make_out"
+          make_rc="${PIPESTATUS[0]}"
           set -e
 
-          # Preserve the automake/sharness combined log in the harness logs dir.
+          # Prefer automake combined log; synthesize from tee if missing.
           suite="$build/t/test-suite.log"
+          if [ ! -f "$suite" ]; then
+            suite="/home/v9fs-test/test/logs/diod-test-suite.synthetic.log"
+            # Strip ANSI so FAIL: tokens parse cleanly.
+            sed -E "s/\x1B\[[0-9;]*[A-Za-z]//g" "$make_out" > "$suite" || true
+          fi
           cp -f "$suite" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
 
           # Evaluate failures against the harness XFAIL baseline so we can track them

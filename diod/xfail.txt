@@ -10,12 +10,14 @@
 #   t0010-v9fs-runasuser.t :: root cannot read file
 #
 # Keep this list minimal and update it intentionally when behavior changes.
+# Baseline refreshed 2026-08-25 against tip v7.2 after NET_9P_FD was built-in
+# (unix mounts work; residual access/umount semantics remain).
 
-t0010-v9fs-runasuser.t :: list long directory
 t0010-v9fs-runasuser.t :: root cannot read file
 t0010-v9fs-runasuser.t :: root cannot stat file
 t0010-v9fs-runasuser.t :: root cannot create file
-t0010-v9fs-runasuser.t :: root cannot create file
+t0010-v9fs-runasuser.t :: unmount mnt2
+t0010-v9fs-runasuser.t :: unmount mnt
 t0010-v9fs-runasuser.t :: mount filesystem with uname=root,access=any fails
 
 t0011-v9fs-allsquash.t :: root can create a directory, mode 755
@@ -32,4 +34,3 @@ t0013-v9fs-acl.t :: getfacl confirms ACL is set
 t0013-v9fs-acl.t :: it is set on the server too
 t0013-v9fs-acl.t :: getfacl confirms ACL is unset
 t0013-v9fs-acl.t :: it is unset on the server too
-
