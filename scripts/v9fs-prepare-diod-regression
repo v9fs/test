@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-instrument-v1}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-capsh-v2}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -95,11 +95,38 @@ if old_under not in text:
     raise SystemExit("t0010: test_under_diod block not found for patch")
 text = text.replace(old_under, new_under, 1)
 
-text = text.replace(
-    'mountopts="trans=unix,uname=$(id -un)"',
-    'mountopts="trans=unix,version=9p2000.L,uname=$(id -un)"',
-    1,
-)
+old_cmds = """umountcmd=\"$SUDO umount -l\"
+mountcmd=\"$SUDO mount -n -t 9p\"
+mountopts=\"trans=unix,uname=$(id -un)\"
+"""
+new_cmds = """if test \"$(id -u)\" = \"0\"; then
+	umountcmd=\"$SUDO umount -l\"
+	mountcmd=\"$SUDO mount -n -t 9p\"
+else
+	# util-linux post-mount check runs as euid 0; ACCESS_SINGLE needs mounter == access uid.
+	umountcmd=\"v9fs_access_umount -l\"
+	mountcmd=\"v9fs_access_mount -n -t 9p\"
+fi
+mountopts=\"trans=unix,version=9p2000.L,uname=$(id -un)\"
+"""
+if old_cmds not in text:
+    # idempotent re-run: mountopts may already be patched
+    old_cmds = """umountcmd=\"$SUDO umount -l\"
+mountcmd=\"$SUDO mount -n -t 9p\"
+mountopts=\"trans=unix,version=9p2000.L,uname=$(id -un)\"
+"""
+    new_cmds = """if test \"$(id -u)\" = \"0\"; then
+	umountcmd=\"$SUDO umount -l\"
+	mountcmd=\"$SUDO mount -n -t 9p\"
+else
+	umountcmd=\"v9fs_access_umount -l\"
+	mountcmd=\"v9fs_access_mount -n -t 9p\"
+fi
+mountopts=\"trans=unix,version=9p2000.L,uname=$(id -un)\"
+"""
+if old_cmds not in text:
+    raise SystemExit("t0010: mountcmd block not found for patch")
+text = text.replace(old_cmds, new_cmds, 1)
 
 old_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
 	$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \\
@@ -155,6 +182,35 @@ print(f"patched {t0010}")
 
 helper = src / "t" / "sharness.d" / "20-diod.sh"
 h = helper.read_text()
+
+mount_helpers = """
+# Mount/umount as the test uid with CAP_SYS_ADMIN. sudo mount runs util-linux
+# post-check as euid 0, which fails ACCESS_SINGLE when access=<non-root uid>.
+v9fs_access_mount() {
+\tif test \"$(id -u)\" = \"0\"; then
+\t\tmount \"$@\"
+\telse
+\t\tcapsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
+\t\t    -c 'exec mount \"$@\"' _ \"$@\"
+\tfi
+}
+
+v9fs_access_umount() {
+\tif test \"$(id -u)\" = \"0\"; then
+\t\tumount \"$@\"
+\telse
+\t\tcapsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
+\t\t    -c 'exec umount \"$@\"' _ \"$@\"
+\tfi
+}
+
+"""
+if "v9fs_access_mount()" not in h:
+    anchor = "# Usage: waitsock sockpath [retries]\nwaitsock() {"
+    if anchor not in h:
+        raise SystemExit("20-diod.sh: waitsock anchor not found for mount helpers")
+    h = h.replace(anchor, mount_helpers + anchor, 1)
+
 # Do not delete diod server logs; CI copies them from the build tree after make check.
 old_cleanup = """\tif test -n "$TEST_UNDER_DIOD_ACTIVE"; then
 \t\ttest "$debug" = "t" || cleanup rm -f "${SHARNESS_TEST_DIRECTORY:-..}/$log_file"
@@ -181,6 +237,8 @@ if grep -rhq 'test_under_diod unixsocket ' "${src}/t" --include='*.t' 2>/dev/nul
 fi
 grep -q 'diod-t0010-mount-debug' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'version=9p2000.L' "${src}/t/t0010-v9fs-runasuser.t"
+grep -q 'v9fs_access_mount' "${src}/t/t0010-v9fs-runasuser.t"
+grep -q 'v9fs_access_mount()' "${src}/t/sharness.d/20-diod.sh"
 
 # Autotools bootstrap.
 (cd "${src}" && ./autogen.sh)
