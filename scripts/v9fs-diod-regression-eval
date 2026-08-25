@@ -38,15 +38,17 @@ unexpected="${out_dir}/unexpected.txt"
 # Extract failures from automake/sharness output (or tee fallback).
 # We rely on lines like:
 #   FAIL: t0010-foo.t 38 - description
+#   ERROR: t0010-foo.t 1 - timed out / crashed
 # ANSI color codes are stripped first.
 #
 # Output format:
 #   t0010-foo.t :: description
 sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "${suite_log}" | awk '
-  $1 == "FAIL:" {
+  $1 == "FAIL:" || $1 == "ERROR:" {
     test=$2
     # Find the " - " separator between step number and description.
     # Input tokens look like: FAIL: <test> <num> - <desc...>
+    # Timeout/driver lines may be: ERROR: <test> - <desc...>
     desc=""
     for (i=3; i<=NF; i++) {
       if ($i == "-" && i < NF) {
@@ -57,6 +59,7 @@ sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "${suite_log}" | awk '
         break
       }
     }
+    if (desc == "" && NF >= 2) desc = "automake error/timeout"
     if (desc != "") print test " :: " desc
   }
 ' >"${failures_raw}" || true

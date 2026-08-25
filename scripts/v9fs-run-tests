@@ -59,7 +59,7 @@ if [ -z "${wait_secs}" ]; then
   case "${tests}" in
     smoke) wait_secs=180 ;;
     fsx|postmark|dbench) wait_secs=900 ;;
-    diod-regression) wait_secs=1800 ;;
+    diod-regression) wait_secs=2400 ;;
     qemu-9p2000.L|diod-9p2000.L) wait_secs=600 ;;
     *) wait_secs=300 ;;
   esac

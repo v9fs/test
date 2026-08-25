@@ -17,9 +17,20 @@ apt-get install -y --no-install-recommends \
   lua5.1 liblua5.1-0-dev \
   libcap-dev libmunge-dev libwrap0-dev \
   tclsh rsync perl \
-  sudo \
+  sudo passwd \
   acl \
   dbench postmark
+
+# Dedicated non-root user for sharness. diod's t0010+ encode
+# "root cannot …" / uname=root negatives against --runas=$(id -u) and
+# access=$(id -u); those are meaningless if the suite itself runs as uid 0.
+if ! id -u v9fs >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash --user-group v9fs
+fi
+echo 'v9fs ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/v9fs-nopasswd
+chmod 440 /etc/sudoers.d/v9fs-nopasswd
+# Validate passwordless sudo before the guest boots.
+sudo -u v9fs sudo -n true
 
 # Clone/update source.
 if [ ! -d "${src}/.git" ]; then

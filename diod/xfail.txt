@@ -10,15 +10,9 @@
 #   t0010-v9fs-runasuser.t :: root cannot read file
 #
 # Keep this list minimal and update it intentionally when behavior changes.
-# Baseline refreshed 2026-08-25 against tip v7.2 after NET_9P_FD was built-in
-# (unix mounts work; residual access/umount semantics remain).
-
-t0010-v9fs-runasuser.t :: root cannot read file
-t0010-v9fs-runasuser.t :: root cannot stat file
-t0010-v9fs-runasuser.t :: root cannot create file
-t0010-v9fs-runasuser.t :: unmount mnt2
-t0010-v9fs-runasuser.t :: unmount mnt
-t0010-v9fs-runasuser.t :: mount filesystem with uname=root,access=any fails
+#
+# Note: t0010 "root cannot …" / uname=root negatives are NOT XFAIL'd here;
+# the suite must run as non-root user `v9fs` so those assertions are meaningful.
 
 t0011-v9fs-allsquash.t :: root can create a directory, mode 755
 t0011-v9fs-allsquash.t :: nobody can create a directory, mode 755

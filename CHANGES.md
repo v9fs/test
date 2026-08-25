@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Run diod sharness as non-root user `v9fs` (so ACCESS_SINGLE / `--runas` negatives work); per-test `timeout` via automake `LOG_COMPILER` instead of one outer suite timeout.
 - Refresh diod XFAIL baseline for tip `v7.2` (access/umount residuals); tee `make check` so timeout still yields a parseable suite log for XFAIL eval.
 - Build-in `NET_9P_FD` (and `UNIX`) on published Images so diod-regression `trans=unix` mounts work; arm64 defconfig left FD as `=m` while virtio was forced `=y`.
 - Fix `v9fs-ci-report` heredoc quoting so tip/wiki markdown renders correctly.

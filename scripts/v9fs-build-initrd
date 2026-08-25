@@ -78,18 +78,25 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
             build="$(ls -d /workspaces/tmp/diod-build-* 2>/dev/null | sort | tail -n 1 || true)"
           fi
           [ -n "$build" ] || { echo "diod-regression: missing diod build dir"; exit 2; }
+          id -u v9fs >/dev/null 2>&1 || { echo "diod-regression: missing v9fs user (prepare step)"; exit 2; }
+
           cd "$build"
           # The sharness tests expect helper binaries from src/cmd check_PROGRAMS.
           make -C src/cmd test_diodrun test_flock test_flock_single test_atomic_create test_pathwalk
 
           mkdir -p /home/v9fs-test/test/logs
+          # Guest writes as non-root; keep build/logs writable across 9p uid maps.
+          chmod -R a+rwX "$build" /home/v9fs-test/test/logs /workspaces/tmp || true
           make_out="/home/v9fs-test/test/logs/diod-make.out"
 
-          # These are the kernel v9fs client oriented tests.
-          # Tee console output so we can still eval XFAIL if timeout/TERM
-          # causes automake to delete t/*.log before writing test-suite.log.
+          # Run as non-root so --runas=$(id -u) / access=$(id -u) match diod intent.
+          # Per-test timeout (LOG_COMPILER) so a hung script FAILs that test instead of
+          # stalling the whole suite under a single outer timeout.
           set +e
-          timeout 15m make -C t check TESTS="\
+          sudo -u v9fs -H make -C t check \
+            LOG_COMPILER=timeout \
+            AM_LOG_FLAGS=300 \
+            TESTS="\
             t0010-v9fs-runasuser.t \
             t0011-v9fs-allsquash.t \
             t0012-v9fs-multiuser.t \
