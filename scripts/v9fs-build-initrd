@@ -116,6 +116,12 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           fi
           cp -f "$suite" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
 
+          # Scoop t0010 mount instrumentation + diod server logs for CI artifacts.
+          cp -f /home/v9fs-test/test/logs/diod-t0010-mount-debug.txt \
+            /home/v9fs-test/test/logs/ 2>/dev/null || true
+          find "$build/t" -maxdepth 3 \( -name '*.diod.log' -o -name 'diod-t0010-mount-debug.txt' \) \
+            -exec cp -f {} /home/v9fs-test/test/logs/ \; 2>/dev/null || true
+
           # Evaluate failures against the harness XFAIL baseline so we can track them
           # without failing the overall CI stage unless a regression appears.
           eval_out="/home/v9fs-test/test/logs/diod-xfail"

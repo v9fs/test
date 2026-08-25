@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Instrument diod `t0010` first `access=<uid>` mount (stderr/dmesg/diod log), pin `version=9p2000.L`, pre-create export, `Defaults !requiretty`, and force a fresh patched build stamp so CI can triage residual non-root mount failures.
 - Run diod sharness as non-root user `v9fs` (so ACCESS_SINGLE / `--runas` negatives work); per-test `timeout` via automake `LOG_COMPILER` instead of one outer suite timeout.
 - Refresh diod XFAIL baseline for tip `v7.2` (access/umount residuals); tee `make check` so timeout still yields a parseable suite log for XFAIL eval.
 - Build-in `NET_9P_FD` (and `UNIX`) on published Images so diod-regression `trans=unix` mounts work; arm64 defconfig left FD as `=m` while virtio was forced `=y`.

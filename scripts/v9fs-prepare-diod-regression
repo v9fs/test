@@ -8,6 +8,8 @@ src="${DIOD_SRC:-/workspaces/tmp/diod-src}"
 build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
+# Bump when harness patches change so CI does not reuse a stale content-addressed build.
+patch_stamp="${DIOD_PATCH_STAMP:-mount-instrument-v1}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -35,10 +37,11 @@ if ! grep -q 'v9fs-guest' /etc/hosts 2>/dev/null; then
 fi
 cat >/etc/sudoers.d/v9fs-nopasswd <<'EOF'
 Defaults !fqdn
+Defaults !requiretty
 v9fs ALL=(ALL) NOPASSWD:ALL
 EOF
 chmod 440 /etc/sudoers.d/v9fs-nopasswd
-# Validate passwordless sudo before the guest boots.
+# Validate passwordless sudo before the guest boots (no tty, like diodrun setsid).
 sudo -u v9fs sudo -n true
 
 # Clone/update source.
@@ -49,17 +52,140 @@ fi
 git -C "${src}" fetch --depth 1 origin "${ref}" || true
 git -C "${src}" checkout -q "${ref}" || true
 
+# Reset patched files so re-prepare is idempotent.
+git -C "${src}" checkout -q -- \
+  t/t0010-v9fs-runasuser.t \
+  t/sharness.d/20-diod.sh \
+  || true
+
 # Start diod as root then drop to --runas (production path). Non-root
 # `unixsocket` left us with flaky mounts (ECONNREFUSED / cascading FAILs)
 # even though waitsock passed; `unixsocketroot` matches diod's own root→runas flow.
 find "${src}/t" -type f -name 't*.t' -print0 \
   | xargs -0 sed -i 's/test_under_diod unixsocket /test_under_diod unixsocketroot /g'
 
+# Harness patches: keep diod logs, pre-create export, instrument first mount,
+# and pin dialect. Do NOT connect-probe the unix socket before the long-lived
+# mount — diod --socktest exits once the first connection drops to zero.
+python3 - <<'PY' "${src}"
+import pathlib, sys
+src = pathlib.Path(sys.argv[1])
+
+t0010 = src / "t" / "t0010-v9fs-runasuser.t"
+text = t0010.read_text()
+old_under = """exportdir=$SHARNESS_TRASH_DIRECTORY/exp
+test_under_diod unixsocketroot \\
+    --config-file=/dev/null \\
+    --debug=0x1 \\
+    --runas=$(id -u) \\
+    --no-auth \\
+    --export=$exportdir
+"""
+new_under = """exportdir=$SHARNESS_TRASH_DIRECTORY/exp
+# Export must exist before diod attach; create early (idempotent across re-exec).
+mkdir -p "$exportdir"
+test_under_diod unixsocketroot \\
+    --config-file=/dev/null \\
+    --debug=0x1 \\
+    --runas=$(id -u) \\
+    --no-auth \\
+    --export=$exportdir
+"""
+if old_under not in text:
+    raise SystemExit("t0010: test_under_diod block not found for patch")
+text = text.replace(old_under, new_under, 1)
+
+text = text.replace(
+    'mountopts="trans=unix,uname=$(id -un)"',
+    'mountopts="trans=unix,version=9p2000.L,uname=$(id -un)"',
+    1,
+)
+
+old_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
+	$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \\
+	    $DIOD_SOCKET mnt
+'
+"""
+new_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
+	dbg=/home/v9fs-test/test/logs/diod-t0010-mount-debug.txt &&
+	mkdir -p /home/v9fs-test/test/logs &&
+	set +e &&
+	{
+	  echo "=== mount debug ==="
+	  id
+	  getent passwd "$(id -un)"
+	  echo "exportdir=$exportdir"
+	  echo "DIOD_SOCKET=$DIOD_SOCKET"
+	  echo "mountopts=$mountopts"
+	  echo "access=$(id -u) uname=$(id -un)"
+	  ls -ld "$exportdir" "$DIOD_SOCKET" "$(dirname "$DIOD_SOCKET")"
+	  ls -l "$DIOD_SOCKET"
+	  echo "--- diod log (pre) ---"
+	  cat "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log"
+	  echo "--- dmesg (pre) ---"
+	  dmesg | tail -n 40
+	  echo "--- mount command ---"
+	  echo "$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) $DIOD_SOCKET mnt"
+	  $mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \\
+	      $DIOD_SOCKET mnt >mount.stdout 2>mount.stderr
+	  echo $? >mount.rc
+	  echo "mount_rc=$(cat mount.rc)"
+	  echo "--- mount stdout ---"; cat mount.stdout
+	  echo "--- mount stderr ---"; cat mount.stderr
+	  echo "--- diod log (post) ---"
+	  cat "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log"
+	  echo "--- dmesg (post) ---"
+	  dmesg | tail -n 80
+	  echo "--- mount | grep 9p ---"
+	  mount | grep 9p
+	} >"$dbg" 2>&1
+	cp -f "$dbg" "${SHARNESS_TEST_DIRECTORY:-..}/diod-t0010-mount-debug.txt"
+	cp -f "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log" \\
+	  /home/v9fs-test/test/logs/t0010-v9fs-runasuser.t.diod.log
+	echo "diod-t0010: mount debug at $dbg rc=$(cat mount.rc 2>/dev/null)"
+	set -e &&
+	test "$(cat mount.rc)" = "0"
+'
+"""
+if old_mount not in text:
+    raise SystemExit("t0010: mount test block not found for patch")
+text = text.replace(old_mount, new_mount, 1)
+t0010.write_text(text)
+print(f"patched {t0010}")
+
+helper = src / "t" / "sharness.d" / "20-diod.sh"
+h = helper.read_text()
+# Do not delete diod server logs; CI copies them from the build tree after make check.
+old_cleanup = """\tif test -n "$TEST_UNDER_DIOD_ACTIVE"; then
+\t\ttest "$debug" = "t" || cleanup rm -f "${SHARNESS_TEST_DIRECTORY:-..}/$log_file"
+\t\treturn
+\tfi
+"""
+new_cleanup = """\tif test -n "$TEST_UNDER_DIOD_ACTIVE"; then
+\t\t# Keep $log_file for harness triage (was removed unless --debug).
+\t\treturn
+\tfi
+"""
+if old_cleanup not in h:
+    raise SystemExit("20-diod.sh: cleanup block not found for patch")
+helper.write_text(h.replace(old_cleanup, new_cleanup, 1))
+print(f"patched {helper}")
+PY
+
+n_root=$(grep -c 'test_under_diod unixsocketroot' "${src}/t/"*.t || true)
+n_unix=$(grep -c 'test_under_diod unixsocket ' "${src}/t/"*.t || true)
+echo "diod harness patch: unixsocketroot=${n_root} remaining_unixsocket=${n_unix} stamp=${patch_stamp}"
+test "${n_unix}" = "0"
+grep -q 'diod-t0010-mount-debug' "${src}/t/t0010-v9fs-runasuser.t"
+grep -q 'version=9p2000.L' "${src}/t/t0010-v9fs-runasuser.t"
+
 # Autotools bootstrap.
 (cd "${src}" && ./autogen.sh)
 
 # Build in a content-addressed directory (avoids cleanup issues with mixed uid mappings).
-build_real="/workspaces/tmp/diod-build-$(git -C "${src}" rev-parse --short HEAD)"
+build_real="/workspaces/tmp/diod-build-$(git -C "${src}" rev-parse --short HEAD)-${patch_stamp}"
+# Drop any previous stamp build for this tip so configure/make see fresh patched sources.
+rm -rf "${build_real}"
 mkdir -p "${build_real}"
 
 (cd "${build_real}" && "${src}/configure")
@@ -67,6 +193,8 @@ mkdir -p "${build_real}"
 
 # Record the build directory for the guest (symlinks can be awkward across 9p+bind mounts).
 echo "${build_real}" > /workspaces/tmp/diod-build.LATEST
+# Convenience link for humans/scripts.
+ln -sfn "${build_real}" "${build_link}" 2>/dev/null || true
 
 # The guest writes test logs into the build tree; ensure it's writable over 9p
 # regardless of uid mapping.
@@ -74,4 +202,3 @@ chmod -R a+rwX "${src}" "${build_real}" || true
 
 echo "Prepared diod build at ${build_real}"
 ls -la "${build_real}/t" | head -n 50 || true
-
