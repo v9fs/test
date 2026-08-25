@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-capsh-v2}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-capsh-v3}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -190,7 +190,7 @@ v9fs_access_mount() {
 \tif test \"$(id -u)\" = \"0\"; then
 \t\tmount \"$@\"
 \telse
-\t\tcapsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
+\t\t$SUDO capsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
 \t\t    -c 'exec mount \"$@\"' _ \"$@\"
 \tfi
 }
@@ -199,13 +199,18 @@ v9fs_access_umount() {
 \tif test \"$(id -u)\" = \"0\"; then
 \t\tumount \"$@\"
 \telse
-\t\tcapsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
+\t\t$SUDO capsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
 \t\t    -c 'exec umount \"$@\"' _ \"$@\"
 \tfi
 }
 
 """
-if "v9fs_access_mount()" not in h:
+if "v9fs_access_mount()" in h:
+    h = h.replace(
+        "\t\tcapsh --caps=cap_sys_admin+ep",
+        "\t\t$SUDO capsh --caps=cap_sys_admin+ep",
+    )
+else:
     anchor = "# Usage: waitsock sockpath [retries]\nwaitsock() {"
     if anchor not in h:
         raise SystemExit("20-diod.sh: waitsock anchor not found for mount helpers")
