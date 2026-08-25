@@ -27,7 +27,16 @@ apt-get install -y --no-install-recommends \
 if ! id -u v9fs >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash --user-group v9fs
 fi
-echo 'v9fs ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/v9fs-nopasswd
+# Avoid "sudo: unable to resolve host (none)" in the QEMU guest.
+hostname v9fs-guest 2>/dev/null || true
+echo 'v9fs-guest' >/etc/hostname
+if ! grep -q 'v9fs-guest' /etc/hosts 2>/dev/null; then
+  echo '127.0.0.1 localhost v9fs-guest' >>/etc/hosts
+fi
+cat >/etc/sudoers.d/v9fs-nopasswd <<'EOF'
+Defaults !fqdn
+v9fs ALL=(ALL) NOPASSWD:ALL
+EOF
 chmod 440 /etc/sudoers.d/v9fs-nopasswd
 # Validate passwordless sudo before the guest boots.
 sudo -u v9fs sudo -n true
@@ -39,6 +48,12 @@ if [ ! -d "${src}/.git" ]; then
 fi
 git -C "${src}" fetch --depth 1 origin "${ref}" || true
 git -C "${src}" checkout -q "${ref}" || true
+
+# Start diod as root then drop to --runas (production path). Non-root
+# `unixsocket` left us with flaky mounts (ECONNREFUSED / cascading FAILs)
+# even though waitsock passed; `unixsocketroot` matches diod's own root→runas flow.
+find "${src}/t" -type f -name 't*.t' -print0 \
+  | xargs -0 sed -i 's/test_under_diod unixsocket /test_under_diod unixsocketroot /g'
 
 # Autotools bootstrap.
 (cd "${src}" && ./autogen.sh)
