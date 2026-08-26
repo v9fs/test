@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v5}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v6}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -43,6 +43,8 @@ EOF
 chmod 440 /etc/sudoers.d/v9fs-nopasswd
 # Validate passwordless sudo before the guest boots (no tty, like diodrun setsid).
 sudo -u v9fs sudo -n true
+# Avoid util-linux "Too many levels of symbolic links" on broken /etc/mtab.
+ln -sfn /proc/self/mounts /etc/mtab
 
 # Clone/update source.
 if [ ! -d "${src}/.git" ]; then
@@ -140,38 +142,26 @@ new_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
 	{
 	  echo "=== mount debug ==="
 	  id
-	  getent passwd "$(id -un)"
-	  echo "exportdir=$exportdir"
-	  echo "DIOD_SOCKET=$DIOD_SOCKET"
-	  echo "mountopts=$mountopts"
-	  echo "access=$(id -u) uname=$(id -un)"
-	  ls -ld "$exportdir" "$DIOD_SOCKET" "$(dirname "$DIOD_SOCKET")"
+	  echo "exportdir=$exportdir DIOD_SOCKET=$DIOD_SOCKET"
+	  echo "mountcmd=$mountcmd"
+	  echo "opts=aname=$exportdir,$mountopts,access=$(id -u)"
 	  ls -l "$DIOD_SOCKET"
-	  echo "--- diod log (pre) ---"
 	  cat "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log"
-	  echo "--- dmesg (pre) ---"
-	  dmesg | tail -n 40
-	  echo "--- mount command ---"
-	  echo "$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) $DIOD_SOCKET mnt"
 	  $mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \\
 	      $DIOD_SOCKET mnt >mount.stdout 2>mount.stderr
 	  echo $? >mount.rc
 	  echo "mount_rc=$(cat mount.rc)"
-	  echo "--- mount stdout ---"; cat mount.stdout
-	  echo "--- mount stderr ---"; cat mount.stderr
-	  echo "--- diod log (post) ---"
+	  cat mount.stdout; cat mount.stderr
 	  cat "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log"
-	  echo "--- dmesg (post) ---"
-	  dmesg | tail -n 80
-	  echo "--- mount | grep 9p ---"
-	  mount | grep 9p
+	  grep 9p /proc/self/mountinfo
 	} >"$dbg" 2>&1
 	cp -f "$dbg" "${SHARNESS_TEST_DIRECTORY:-..}/diod-t0010-mount-debug.txt"
 	cp -f "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log" \\
 	  /home/v9fs-test/test/logs/t0010-v9fs-runasuser.t.diod.log
 	echo "diod-t0010: mount debug at $dbg rc=$(cat mount.rc 2>/dev/null)"
 	set -e &&
-	test "$(cat mount.rc)" = "0"
+	test "$(cat mount.rc)" = "0" &&
+	cleanup $umountcmd mnt
 '
 """
 if old_mount not in text:

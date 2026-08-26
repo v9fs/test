@@ -93,7 +93,7 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           # Per-test timeout (LOG_COMPILER) so a hung script FAILs that test instead of
           # stalling the whole suite under a single outer timeout.
           set +e
-          sudo -u v9fs -H make -C t check \
+          sudo -u v9fs -H stdbuf -oL -eL make -C t check \
             LOG_COMPILER=timeout \
             AM_LOG_FLAGS=300 \
             TESTS="\
@@ -106,6 +106,14 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           " 2>&1 | tee "$make_out"
           make_rc="${PIPESTATUS[0]}"
           set -e
+          # If a timed-out test left a live unix 9p mount, drop it so diod
+          # --socktest / diodrun can exit instead of hanging until qemu timeout.
+          awk '/9p/ && /trans=unix/ {print $5}' /proc/self/mountinfo 2>/dev/null \
+            | while read -r mnt; do
+                umount -l "$mnt" 2>/dev/null || true
+              done
+          pkill -x diod 2>/dev/null || true
+          sleep 1
 
           # Prefer automake combined log; synthesize from tee if missing.
           suite="$build/t/test-suite.log"
