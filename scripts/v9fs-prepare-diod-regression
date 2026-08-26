@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-capsh-v3}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v4}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -184,14 +184,20 @@ helper = src / "t" / "sharness.d" / "20-diod.sh"
 h = helper.read_text()
 
 mount_helpers = """
-# Mount/umount as the test uid with CAP_SYS_ADMIN. sudo mount runs util-linux
-# post-check as euid 0, which fails ACCESS_SINGLE when access=<non-root uid>.
+V9FS_MOUNT_9P=/workspaces/tmp/v9fs-mount-9p
+
+# Minimal mount(2) helper avoids util-linux post-check as root under ACCESS_SINGLE.
 v9fs_access_mount() {
-\tif test \"$(id -u)\" = \"0\"; then
+\tif test -x \"$V9FS_MOUNT_9P\"; then
+\t\tif test \"$(id -u)\" = \"0\"; then
+\t\t\t\"$V9FS_MOUNT_9P\" \"$@\"
+\t\telse
+\t\t\t$SUDO \"$V9FS_MOUNT_9P\" \"$@\"
+\t\tfi
+\telif test \"$(id -u)\" = \"0\"; then
 \t\tmount \"$@\"
 \telse
-\t\t$SUDO capsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
-\t\t    -c 'exec mount \"$@\"' _ \"$@\"
+\t\t$SUDO mount \"$@\"
 \tfi
 }
 
@@ -199,16 +205,19 @@ v9fs_access_umount() {
 \tif test \"$(id -u)\" = \"0\"; then
 \t\tumount \"$@\"
 \telse
-\t\t$SUDO capsh --caps=cap_sys_admin+ep --keep=1 --inh=1 --user=\"$(id -un)\" -- \\
-\t\t    -c 'exec umount \"$@\"' _ \"$@\"
+\t\t$SUDO umount \"$@\"
 \tfi
 }
 
 """
 if "v9fs_access_mount()" in h:
-    h = h.replace(
-        "\t\tcapsh --caps=cap_sys_admin+ep",
-        "\t\t$SUDO capsh --caps=cap_sys_admin+ep",
+    import re
+    h = re.sub(
+        r"\nV9FS_MOUNT_9P=.*?\nv9fs_access_umount\(\) \{.*?\n\}\n\n",
+        "\n" + mount_helpers,
+        h,
+        count=1,
+        flags=re.S,
     )
 else:
     anchor = "# Usage: waitsock sockpath [retries]\nwaitsock() {"
@@ -243,7 +252,11 @@ fi
 grep -q 'diod-t0010-mount-debug' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'version=9p2000.L' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'v9fs_access_mount' "${src}/t/t0010-v9fs-runasuser.t"
-grep -q 'v9fs_access_mount()' "${src}/t/sharness.d/20-diod.sh"
+grep -q 'V9FS_MOUNT_9P' "${src}/t/sharness.d/20-diod.sh"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+gcc -O2 -o /workspaces/tmp/v9fs-mount-9p "${script_dir}/v9fs-mount-9p.c"
+chmod 755 /workspaces/tmp/v9fs-mount-9p
 
 # Autotools bootstrap.
 (cd "${src}" && ./autogen.sh)
