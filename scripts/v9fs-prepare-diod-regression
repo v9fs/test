@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v7}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v8}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -58,6 +58,7 @@ git -C "${src}" checkout -q "${ref}" || true
 git -C "${src}" checkout -q -- \
   t/t0010-v9fs-runasuser.t \
   t/sharness.d/20-diod.sh \
+  t/sharness.sh \
   || true
 
 # Start diod as root then drop to --runas (production path). Non-root
@@ -152,8 +153,11 @@ new_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
 	  echo $? >mount.rc
 	  echo "mount_rc=$(cat mount.rc)"
 	  cat mount.stdout; cat mount.stderr
+	  echo "--- post-mount probes ---"
+	  timeout 5 stat -f -c "type=%t" mnt; echo "stat_rc=$?"
+	  timeout 5 ls -la mnt; echo "ls_rc=$?"
 	  cat "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log"
-	  grep 9p /proc/self/mountinfo
+	  timeout 5 grep 9p /proc/self/mountinfo; echo "mountinfo_rc=$?"
 	} >"$dbg" 2>&1
 	cp -f "$dbg" "${SHARNESS_TEST_DIRECTORY:-..}/diod-t0010-mount-debug.txt"
 	cp -f "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log" \\
@@ -230,6 +234,18 @@ if old_cleanup not in h:
     raise SystemExit("20-diod.sh: cleanup block not found for patch")
 helper.write_text(h.replace(old_cleanup, new_cleanup, 1))
 print(f"patched {helper}")
+
+# Keep sharness trash on /tmp (tmpfs), not under the virtio-9p build tree.
+# Nested 9p (unix diod mount whose mountpoint/export live on virtio-9p) deadlocks
+# userspace path walks after a successful mount.
+sharness = src / "t" / "sharness.sh"
+s = sharness.read_text()
+old_trash = 'SHARNESS_TRASH_DIRECTORY="trash-directory.$SHARNESS_TEST_NAME"'
+new_trash = 'SHARNESS_TRASH_DIRECTORY="/tmp/sharness-trash/$SHARNESS_TEST_NAME"'
+if old_trash not in s:
+    raise SystemExit("sharness.sh: trash directory assignment not found")
+sharness.write_text(s.replace(old_trash, new_trash, 1))
+print(f"patched {sharness}")
 PY
 
 n_root=$(grep -rh 'test_under_diod unixsocketroot' "${src}/t" --include='*.t' 2>/dev/null | wc -l | tr -d ' ' || true)
@@ -243,10 +259,17 @@ grep -q 'diod-t0010-mount-debug' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'version=9p2000.L' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'v9fs_access_mount' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'V9FS_MOUNT_9P' "${src}/t/sharness.d/20-diod.sh"
+grep -q '/tmp/sharness-trash' "${src}/t/sharness.sh"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gcc -O2 -o /workspaces/tmp/v9fs-mount-9p "${script_dir}/v9fs-mount-9p.c"
 chmod 755 /workspaces/tmp/v9fs-mount-9p
+# Ensure /tmp is a real tmpfs (not 9p) for sharness trash / diod exports.
+if ! findmnt -t tmpfs /tmp >/dev/null 2>&1; then
+  mount -t tmpfs -o mode=1777,size=512M tmpfs /tmp
+fi
+mkdir -p /tmp/sharness-trash
+chmod 1777 /tmp /tmp/sharness-trash
 
 # Autotools bootstrap.
 (cd "${src}" && ./autogen.sh)
