@@ -97,9 +97,13 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           # Run as non-root so --runas=$(id -u) / access=$(id -u) match diod intent.
           # Per-test timeout (LOG_COMPILER) so a hung script FAILs that test instead of
           # stalling the whole suite under a single outer timeout.
+          # Install per-test timeout wrapper into /tmp (writable, not on 9p).
+          cp -f /home/v9fs-test/test/scripts/v9fs-diod-test-timeout /tmp/v9fs-diod-test-timeout
+          chmod 755 /tmp/v9fs-diod-test-timeout
+
           set +e
           timeout 1500 sudo -u v9fs -H stdbuf -oL -eL make -C t check \
-            LOG_COMPILER=timeout \
+            LOG_COMPILER=/tmp/v9fs-diod-test-timeout \
             AM_LOG_FLAGS=300 \
             TESTS="\
             t0010-v9fs-runasuser.t \
@@ -111,7 +115,6 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           " 2>&1 | tee "$make_out"
           make_rc="${PIPESTATUS[0]}"
           set -e
-          # Drop leftover unix 9p mounts so diod --socktest / diodrun can exit.
           if [ -r /proc/self/mountinfo ]; then
             while read -r _ _ _ _ mnt _; do
               case "$mnt" in
@@ -145,6 +148,12 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           /home/v9fs-test/test/scripts/v9fs-diod-regression-eval "$suite" "$xfail" "$eval_out"
           eval_rc="$?"
 
+          # timeout(1) exits 124; signals often yield 143/137. Never treat an
+          # aborted suite with zero FAIL lines as an XFAIL pass.
+          if [ "$make_rc" -eq 124 ] || [ "$make_rc" -ge 128 ]; then
+            echo "diod-regression: make aborted rc=$make_rc (timeout/signal)"
+            exit "$make_rc"
+          fi
           if [ "$eval_rc" = "0" ]; then
             exit 0
           fi

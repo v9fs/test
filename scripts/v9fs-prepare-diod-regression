@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v9}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v10}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -161,6 +161,25 @@ new_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
 if old_mount not in text:
     raise SystemExit("t0010: mount test block not found for patch")
 text = text.replace(old_mount, new_mount, 1)
+
+# Breadcrumb + bounded next assertion (hang was after mount PASS with no further lines).
+old_stat = """test_expect_success STAT 'file system type is v9fs' '
+	echo 1021997 >type.exp &&
+	stat -f -c \"%t\" mnt >type.out &&
+	test_cmp type.exp type.out
+'
+"""
+new_stat = """test_expect_success STAT 'file system type is v9fs' '
+	echo NEXT_stat_type &&
+	echo 1021997 >type.exp &&
+	timeout 30 stat -f -c \"%t\" mnt >type.out &&
+	echo NEXT_stat_type_done &&
+	test_cmp type.exp type.out
+'
+"""
+if old_stat not in text:
+    raise SystemExit("t0010: stat type test block not found for patch")
+text = text.replace(old_stat, new_stat, 1)
 t0010.write_text(text)
 print(f"patched {t0010}")
 
