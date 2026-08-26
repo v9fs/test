@@ -1,0 +1,826 @@
+#!/usr/bin/env python3
+"""Reproduce v9fs/linux#3: tail -f does not see server-side appends.
+
+This script is a unit test for *visibility of writes that do not go through
+the 9p client*. It is meant to run on its own while we iterate:
+
+  ./scripts/v9fs-tail-follow selftest          # no 9p, no QEMU (must PASS)
+  ./scripts/v9fs-tail-follow observe ...       # already-mounted 9p client + export
+  ./scripts/v9fs-tail-follow guest             # inside the QEMU chroot (harness)
+
+Each case records which observation method saw the append so we can tell
+apart the issue-#3 fix options:
+
+  inotify     GNU tail -f path; also a raw inotify watch
+  fstat_size  i_size on a kept-open fd (tail's poll loop)
+  fd_read     read(2) on that same fd
+  stat_size   stat(2) on the path (may revalidate the dentry)
+  reopen      close, open, read (close-to-open)
+
+cache=loose / fscache live-follow is XFAIL (documented non-coherent).
+cache=none / readahead / mmap live-follow is required: a FAIL there is #3.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import ctypes.util
+import json
+import os
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from typing import Any, Dict, List, Optional
+
+ISSUE_URL = "https://github.com/v9fs/linux/issues/3"
+DEFAULT_MAGIC = "V9FS-TAIL-FOLLOW-MAGIC"
+DEFAULT_TIMEOUT = 8.0
+LIVE_METHODS = ("inotify", "fstat_size", "fd_read", "stat_size", "tail")
+ALL_METHODS = LIVE_METHODS + ("reopen",)
+
+# Caches that promise no server coherence. Live follow is not required.
+INCOHERENT_CACHES = frozenset({"loose", "fscache"})
+COHERENT_CACHES = ("none", "readahead", "mmap")
+
+libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+IN_MODIFY = 0x00000002
+IN_ATTRIB = 0x00000004
+IN_CLOSE_WRITE = 0x00000008
+IN_MOVE_SELF = 0x00000800
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _now() -> str:
+    return time.strftime("%H:%M:%S")
+
+
+def log(msg: str) -> None:
+    print(f"tail-follow: {msg}", flush=True)
+
+
+def write_atomic(path: str, data: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(data)
+    os.replace(tmp, path)
+
+
+class Watcher:
+    """Arm watchers on *client_path*, then wait for *needle* to appear."""
+
+    def __init__(self, client_path: str, needle: str, timeout: float):
+        self.client_path = client_path
+        self.needle = needle
+        self.needle_b = needle.encode("utf-8", "surrogateescape")
+        self.timeout = timeout
+        self.stop = threading.Event()
+        self.t0 = 0.0
+        self.events: Dict[str, Dict[str, Any]] = {
+            m: {"saw": False, "sec": None, "detail": ""} for m in ALL_METHODS
+        }
+        self._threads: List[threading.Thread] = []
+        self._tail_proc: Optional[subprocess.Popen] = None
+
+    def _mark(self, method: str, detail: str = "") -> None:
+        ev = self.events[method]
+        if ev["saw"]:
+            return
+        ev["saw"] = True
+        ev["sec"] = round(_monotonic() - self.t0, 4)
+        ev["detail"] = detail
+
+    def arm(self) -> None:
+        if not os.path.exists(self.client_path):
+            raise FileNotFoundError(self.client_path)
+        self.t0 = _monotonic()
+        self.stop.clear()
+        for fn, name in (
+            (self._inotify_loop, "inotify"),
+            (self._fstat_loop, "fstat"),
+            (self._stat_loop, "stat"),
+            (self._tail_loop, "tail"),
+        ):
+            t = threading.Thread(target=fn, name=name, daemon=True)
+            t.start()
+            self._threads.append(t)
+        # Give the threads a moment to enter their wait before the append.
+        time.sleep(0.15)
+
+    def wait(self) -> None:
+        deadline = _monotonic() + self.timeout
+        while _monotonic() < deadline and not self._all_live_saw():
+            time.sleep(0.05)
+        self.stop.set()
+        if self._tail_proc and self._tail_proc.poll() is None:
+            self._tail_proc.send_signal(signal.SIGTERM)
+            try:
+                self._tail_proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self._tail_proc.kill()
+        for t in self._threads:
+            t.join(timeout=1.5)
+        self._reopen()
+
+    def _all_live_saw(self) -> bool:
+        return all(self.events[m]["saw"] for m in LIVE_METHODS)
+
+    def result(self) -> Dict[str, Any]:
+        return {m: dict(self.events[m]) for m in ALL_METHODS}
+
+    def _inotify_loop(self) -> None:
+        try:
+            fd = libc.inotify_init1(os.O_CLOEXEC | os.O_NONBLOCK)
+            if fd < 0:
+                raise OSError(ctypes.get_errno(), "inotify_init1")
+            watch_mask = IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVE_SELF
+            wd = libc.inotify_add_watch(
+                fd, self.client_path.encode("utf-8"), watch_mask
+            )
+            if wd < 0:
+                raise OSError(ctypes.get_errno(), "inotify_add_watch")
+        except OSError as e:
+            self.events["inotify"]["detail"] = f"unavailable: {e}"
+            return
+        try:
+            while not self.stop.is_set():
+                r, _, _ = select.select([fd], [], [], 0.1)
+                if not r:
+                    continue
+                try:
+                    data = os.read(fd, 4096)
+                except BlockingIOError:
+                    continue
+                if data:
+                    self._mark("inotify", f"bytes={len(data)}")
+                    break
+        finally:
+            os.close(fd)
+
+    def _fstat_loop(self) -> None:
+        try:
+            fd = os.open(self.client_path, os.O_RDONLY)
+        except OSError as e:
+            self.events["fstat_size"]["detail"] = str(e)
+            self.events["fd_read"]["detail"] = str(e)
+            return
+        try:
+            base = os.fstat(fd).st_size
+            while not self.stop.is_set():
+                try:
+                    st = os.fstat(fd)
+                except OSError as e:
+                    self.events["fstat_size"]["detail"] = str(e)
+                    break
+                if st.st_size > base:
+                    self._mark("fstat_size", f"size {base}->{st.st_size}")
+                    try:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        blob = os.read(fd, st.st_size + 64)
+                    except OSError as e:
+                        self.events["fd_read"]["detail"] = str(e)
+                    else:
+                        if self.needle_b in blob:
+                            self._mark("fd_read", f"read {len(blob)} bytes")
+                    if self.events["fstat_size"]["saw"] and self.events["fd_read"]["saw"]:
+                        break
+                time.sleep(0.05)
+        finally:
+            os.close(fd)
+
+    def _stat_loop(self) -> None:
+        try:
+            base = os.stat(self.client_path).st_size
+        except OSError as e:
+            self.events["stat_size"]["detail"] = str(e)
+            return
+        while not self.stop.is_set():
+            try:
+                st = os.stat(self.client_path)
+            except OSError as e:
+                self.events["stat_size"]["detail"] = str(e)
+                break
+            if st.st_size > base:
+                self._mark("stat_size", f"size {base}->{st.st_size}")
+                break
+            time.sleep(0.05)
+
+    def _tail_loop(self) -> None:
+        tail = shutil.which("tail")
+        if not tail:
+            self.events["tail"]["detail"] = "no tail binary"
+            return
+        try:
+            self._tail_proc = subprocess.Popen(
+                [tail, "-n", "0", "-f", self.client_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        except OSError as e:
+            self.events["tail"]["detail"] = str(e)
+            return
+        buf = b""
+        assert self._tail_proc.stdout is not None
+        fd = self._tail_proc.stdout.fileno()
+        os.set_blocking(fd, False)
+        while not self.stop.is_set():
+            r, _, _ = select.select([fd], [], [], 0.1)
+            if r:
+                try:
+                    chunk = os.read(fd, 4096)
+                except BlockingIOError:
+                    chunk = b""
+                if chunk:
+                    buf += chunk
+                    if self.needle_b in buf:
+                        self._mark("tail", buf.decode("utf-8", "replace")[:200])
+                        break
+            if self._tail_proc.poll() is not None:
+                err = b""
+                if self._tail_proc.stderr:
+                    err = self._tail_proc.stderr.read() or b""
+                self.events["tail"]["detail"] = (
+                    f"tail exited {self._tail_proc.returncode}: "
+                    f"{err.decode('utf-8', 'replace')[:200]}"
+                )
+                break
+
+    def _reopen(self) -> None:
+        try:
+            with open(self.client_path, "rb") as f:
+                blob = f.read()
+        except OSError as e:
+            self.events["reopen"]["detail"] = str(e)
+            return
+        if self.needle_b in blob:
+            self._mark("reopen", f"read {len(blob)} bytes")
+        else:
+            self.events["reopen"]["detail"] = f"no needle in {len(blob)} bytes"
+
+
+def append_line(path: str, line: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "ab") as f:
+        f.write(line.encode("utf-8") + b"\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def diagnose(cache: str, methods: Dict[str, Any]) -> str:
+    """Map the method matrix onto the issue-#3 fix options."""
+    inotify = methods["inotify"]["saw"]
+    fstat = methods["fstat_size"]["saw"]
+    fd_read = methods["fd_read"]["saw"]
+    stat = methods["stat_size"]["saw"]
+    tail = methods["tail"]["saw"]
+    reopen = methods["reopen"]["saw"]
+    any_live = inotify or fstat or fd_read or stat or tail
+
+    if cache in INCOHERENT_CACHES:
+        if all(methods[m]["saw"] for m in LIVE_METHODS):
+            return "incoherent cache unexpectedly saw live follow"
+        if reopen:
+            return "incoherent cache: close-to-open only (expected)"
+        return "incoherent cache: nothing visible including reopen"
+
+    hints: List[str] = []
+    if not any_live and reopen:
+        hints.append(
+            "only reopen saw the append: close-to-open coherence only "
+            "(related to #22); live follow still broken"
+        )
+    elif not any_live and not reopen:
+        hints.append("nothing visible including reopen: lookup/getattr also stale")
+    else:
+        if not inotify and (fstat or stat or fd_read):
+            hints.append(
+                "inotify silent while size/read saw data: stop advertising "
+                "inotify so GNU tail falls back to poll/stat"
+            )
+        if stat and not fstat:
+            hints.append(
+                "path stat saw growth, kept-open fstat did not: refresh "
+                "i_size on open files (getattr on fid)"
+            )
+        if fstat and not fd_read:
+            hints.append(
+                "fstat saw size growth but read missed the needle: page cache "
+                "vs i_size split"
+            )
+        if not tail and (fstat or stat) and not inotify:
+            hints.append(
+                "GNU tail -f missed despite size watchers: tail is stuck on "
+                "inotify; dropping inotify would let it poll"
+            )
+        if tail and not inotify:
+            hints.append("GNU tail saw data without inotify (poll/stat path)")
+        if inotify and not tail:
+            hints.append("inotify fired but GNU tail missed the line")
+    if not hints:
+        if any_live and reopen:
+            return "all required methods saw the append"
+        return "partial live-follow; see method columns"
+    return "; ".join(hints)
+
+
+def classify(cache: str, methods: Dict[str, Any]) -> Dict[str, Any]:
+    """required live-follow for coherent caches; XFAIL live-follow on loose."""
+    incoherent = cache in INCOHERENT_CACHES
+    live_ok = all(methods[m]["saw"] for m in LIVE_METHODS)
+    reopen_ok = methods["reopen"]["saw"]
+    note = diagnose(cache, methods)
+    if incoherent:
+        # Live follow is not part of the contract. reopen may still fail.
+        if not any(methods[m]["saw"] for m in ALL_METHODS):
+            return {"verdict": "XFAIL", "required": False, "note": note}
+        if live_ok:
+            return {"verdict": "XPASS", "required": False, "note": note}
+        return {"verdict": "XFAIL", "required": False, "note": note}
+    # Coherent caches: live follow is the #3 contract.
+    if live_ok and reopen_ok:
+        return {"verdict": "PASS", "required": True, "note": note}
+    return {"verdict": "FAIL", "required": True, "note": note}
+
+
+def print_table(cases: List[Dict[str, Any]]) -> None:
+    cols = (
+        "server",
+        "cache",
+        "inotify",
+        "fstat",
+        "fd_read",
+        "stat",
+        "tail",
+        "reopen",
+        "verdict",
+    )
+    rows = [cols]
+    for c in cases:
+        m = c["methods"]
+
+        def yn(key: str) -> str:
+            return "Y" if m[key]["saw"] else "n"
+
+        rows.append(
+            (
+                c["server"],
+                c["cache"],
+                yn("inotify"),
+                yn("fstat_size"),
+                yn("fd_read"),
+                yn("stat_size"),
+                yn("tail"),
+                yn("reopen"),
+                c["verdict"],
+            )
+        )
+    widths = [max(len(str(r[i])) for r in rows) for i in range(len(cols))]
+    log("observation matrix (Y = saw the server append):")
+    for r in rows:
+        log("  " + "  ".join(str(r[i]).ljust(widths[i]) for i in range(len(cols))))
+
+
+def summarize(cases: List[Dict[str, Any]]) -> Dict[str, int]:
+    s = {"pass": 0, "fail": 0, "xfail": 0, "xpass": 0}
+    for c in cases:
+        s[c["verdict"].lower()] += 1
+    return s
+
+
+def run_observe(
+    client_path: str,
+    needle: str,
+    timeout: float,
+    export_path: Optional[str] = None,
+    ready_path: Optional[str] = None,
+    append_delay: float = 0.2,
+) -> Dict[str, Any]:
+    w = Watcher(client_path, needle, timeout)
+    w.arm()
+    if ready_path:
+        write_atomic(ready_path, f"ready {_now()}\n")
+        log(f"armed watchers, wrote {ready_path}")
+    else:
+        log(f"armed watchers on {client_path}")
+    if export_path:
+        time.sleep(append_delay)
+        append_line(export_path, needle)
+        log(f"appended needle to export {export_path}")
+    w.wait()
+    return w.result()
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """Local file, not 9p. Every method must see the append (test infrastructure)."""
+    td = tempfile.mkdtemp(prefix="v9fs-tail-follow-")
+    try:
+        watched = os.path.join(td, "watched")
+        with open(watched, "w", encoding="utf-8") as f:
+            f.write("initial-line\n")
+        magic = args.magic
+        methods = run_observe(
+            client_path=watched,
+            needle=magic,
+            timeout=args.timeout,
+            export_path=watched,
+        )
+        case = {
+            "server": "local",
+            "cache": "n/a",
+            "methods": methods,
+            **classify("none", methods),  # treat as coherent: must pass
+        }
+        # Re-label: selftest is always required.
+        case["required"] = True
+        if not all(methods[m]["saw"] for m in ALL_METHODS):
+            case["verdict"] = "FAIL"
+            case["note"] = "local watchers missed an append on the same file"
+        else:
+            case["verdict"] = "PASS"
+            case["note"] = "local control"
+
+        def _blank() -> Dict[str, Any]:
+            return {m: {"saw": False, "sec": None, "detail": ""} for m in ALL_METHODS}
+
+        only_reopen = _blank()
+        only_reopen["reopen"]["saw"] = True
+        cl = classify("none", only_reopen)
+        if cl["verdict"] != "FAIL" or "reopen" not in cl["note"]:
+            log(f"ERROR: diagnose(reopen-only) unexpected {cl}")
+            return 2
+        inotify_gap = _blank()
+        for m in ("fstat_size", "fd_read", "stat_size", "tail", "reopen"):
+            inotify_gap[m]["saw"] = True
+        cl = classify("none", inotify_gap)
+        if "inotify silent" not in cl["note"]:
+            log(f"ERROR: diagnose(inotify-gap) unexpected {cl}")
+            return 2
+        loose = classify("loose", only_reopen)
+        if loose["verdict"] != "XFAIL" or loose["required"]:
+            log(f"ERROR: classify(loose) unexpected {loose}")
+            return 2
+
+        print_table([case])
+        report = {
+            "issue": ISSUE_URL,
+            "mode": "selftest",
+            "cases": [case],
+            "summary": summarize([case]),
+        }
+        print(json.dumps(report, indent=2))
+        return 0 if case["verdict"] == "PASS" else 1
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+
+def cmd_observe(args: argparse.Namespace) -> int:
+    if not os.path.exists(args.watched):
+        log(f"creating {args.watched}")
+        os.makedirs(os.path.dirname(args.watched) or ".", exist_ok=True)
+        with open(args.watched, "w", encoding="utf-8") as f:
+            f.write("initial-line\n")
+    methods = run_observe(
+        client_path=args.watched,
+        needle=args.magic,
+        timeout=args.timeout,
+        export_path=args.export,
+        ready_path=args.ready,
+    )
+    cache = args.cache
+    case = {
+        "server": args.server,
+        "cache": cache,
+        "methods": methods,
+        **classify(cache, methods),
+    }
+    print_table([case])
+    report = {
+        "issue": ISSUE_URL,
+        "mode": "observe",
+        "cases": [case],
+        "summary": summarize([case]),
+    }
+    if args.report:
+        write_atomic(args.report, json.dumps(report, indent=2) + "\n")
+        log(f"wrote {args.report}")
+    print(json.dumps(report, indent=2))
+    if case["verdict"] == "FAIL":
+        return 1
+    return 0
+
+
+def _repo_logs() -> str:
+    # Guest chroot: repo is at /home/v9fs-test/test. Host-side: script lives in scripts/.
+    candidates = (
+        "/home/v9fs-test/test/logs",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"),
+    )
+    for c in candidates:
+        if os.path.isdir(os.path.dirname(c)) or os.path.isdir(c):
+            os.makedirs(c, exist_ok=True)
+            return c
+    os.makedirs("/tmp/v9fs-tail-follow-logs", exist_ok=True)
+    return "/tmp/v9fs-tail-follow-logs"
+
+
+def _mount_virtio(tag: str, cache: str, dest: str) -> bool:
+    os.makedirs(dest, exist_ok=True)
+    if os.path.ismount(dest):
+        return True
+    p = subprocess.run(
+        [
+            "mount",
+            "-t",
+            "9p",
+            "-o",
+            f"trans=virtio,version=9p2000.L,cache={cache}",
+            tag,
+            dest,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip() or f"rc={p.returncode}"
+        log(f"SKIP qemu tag={tag} cache={cache}: {err}")
+        return False
+    return True
+
+
+def _umount(dest: str) -> None:
+    if os.path.ismount(dest):
+        subprocess.call(["umount", "-l", dest], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _guest_qemu_virtio(logdir: str, magic: str, timeout: float) -> List[Dict[str, Any]]:
+    """One host append, several cache views of the same virtio export.
+
+    hostshare is already mounted as / (the chroot). Remounting that tag fails
+    with "already mounted" / "no channels available". Extra QEMU fsdevs
+    (tf-none, …) provide extra channels; if they are missing we observe the
+    chroot path itself (boot cache=none).
+    """
+    watched_rel = "home/v9fs-test/test/logs/tail-follow.watched"
+    caches = list(COHERENT_CACHES) + ["loose"]
+    mounts: Dict[str, str] = {}
+    extra_dests: List[str] = []
+    for cache in caches:
+        dest = f"/mnt/tf-{cache}"
+        if _mount_virtio(f"tf-{cache}", cache, dest):
+            mounts[cache] = os.path.join(dest, watched_rel)
+            extra_dests.append(dest)
+
+    if not mounts:
+        boot_cache = os.environ.get("V9FS_CACHE", "none")
+        path = os.path.join(logdir, "tail-follow.watched")
+        if not os.path.exists(path):
+            log(f"no virtio path to watch (missing {path})")
+            return []
+        log(
+            f"extra virtio tags unavailable; observing chroot hostshare "
+            f"{path} (cache={boot_cache})"
+        )
+        mounts[boot_cache] = path
+
+    first = next(iter(mounts.values()))
+    os.makedirs(os.path.dirname(first), exist_ok=True)
+    if not os.path.exists(first):
+        with open(first, "w", encoding="utf-8") as f:
+            f.write("initial-line\n")
+
+    watchers: Dict[str, Watcher] = {}
+    for cache, path in mounts.items():
+        log(f"arm qemu-virtio cache={cache} path={path}")
+        w = Watcher(path, magic, timeout)
+        w.arm()
+        watchers[cache] = w
+
+    ready = os.path.join(logdir, "tail-follow.ready")
+    write_atomic(ready, f"ready {_now()} caches={','.join(watchers)}\n")
+    log(f"wrote {ready}; waiting for host append")
+
+    for w in watchers.values():
+        w.wait()
+
+    cases = []
+    for cache, w in watchers.items():
+        methods = w.result()
+        cl = classify(cache, methods)
+        cases.append(
+            {
+                "server": "qemu-virtio",
+                "cache": cache,
+                "methods": methods,
+                **cl,
+            }
+        )
+    for dest in extra_dests:
+        _umount(dest)
+    return cases
+
+
+def _start_diod(export: str, port: int, log_path: str) -> subprocess.Popen:
+    os.makedirs(export, exist_ok=True)
+    subprocess.run(["ip", "link", "set", "lo", "up"], capture_output=True)
+    subprocess.run(["ip", "addr", "add", "127.0.0.1/8", "dev", "lo"], capture_output=True)
+    subprocess.run(["ifconfig", "lo", "127.0.0.1", "up"], capture_output=True)
+    for mod in ("9pnet", "9pnet_fd", "9pnet_virtio", "9p"):
+        subprocess.run(["modprobe", mod], capture_output=True)
+    lf = open(log_path, "ab")
+    proc = subprocess.Popen(
+        [
+            "diod",
+            "--foreground",
+            "--listen",
+            f"127.0.0.1:{port}",
+            "--config-file=/dev/null",
+            "--debug=0x1",
+            "--runas-uid",
+            "0",
+            "--no-auth",
+            "--export",
+            export,
+        ],
+        stdout=lf,
+        stderr=subprocess.STDOUT,
+    )
+    for _ in range(50):
+        if proc.poll() is not None:
+            break
+        try:
+            import socket
+
+            s = socket.create_connection(("127.0.0.1", port), timeout=0.2)
+            s.close()
+            return proc
+        except OSError:
+            time.sleep(0.1)
+    raise RuntimeError(f"diod failed to listen on {port} (rc={proc.poll()})")
+
+
+def _guest_diod(logdir: str, magic: str, timeout: float) -> List[Dict[str, Any]]:
+    if not shutil.which("diod"):
+        log("SKIP diod: binary not present (install via v9fs-prepare-diod-server)")
+        return []
+    # tmpfs so the diod backing store is not itself a virtio-9p file, and so
+    # the 9p mount point is not a directory on the already-mounted hostshare.
+    base = "/tmp/tf-diod"
+    os.makedirs(base, exist_ok=True)
+    subprocess.run(
+        ["mount", "-t", "tmpfs", "-o", "mode=0777", "tmpfs", base], check=False
+    )
+    export = os.path.join(base, "export")
+    mnt = os.path.join(base, "mnt")
+    os.makedirs(export, exist_ok=True)
+    os.makedirs(mnt, exist_ok=True)
+    watched_export = os.path.join(export, "watched")
+    with open(watched_export, "w", encoding="utf-8") as f:
+        f.write("initial-line\n")
+    port = int(os.environ.get("DIOD_PORT", "45671"))
+    diod_log = os.path.join(logdir, "tail-follow.diod.log")
+    try:
+        proc = _start_diod(export, port, diod_log)
+    except Exception as e:
+        log(f"SKIP diod: {e}")
+        subprocess.call(
+            ["umount", "-l", base], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        return []
+    cases: List[Dict[str, Any]] = []
+    opts = (
+        f"trans=tcp,version=9p2000.L,port={port},uname=root,"
+        f"access=any,aname={export}"
+    )
+    try:
+        for cache in list(COHERENT_CACHES) + ["loose"]:
+            if os.path.ismount(mnt):
+                _umount(mnt)
+            p = subprocess.run(
+                ["mount", "-t", "9p", "-o", f"{opts},cache={cache}", "127.0.0.1", mnt],
+                capture_output=True,
+                text=True,
+            )
+            if p.returncode != 0:
+                err = (p.stderr or p.stdout or "").strip() or f"rc={p.returncode}"
+                log(f"SKIP diod cache={cache}: {err}")
+                continue
+            client = os.path.join(mnt, "watched")
+            log(f"diod cache={cache}: observe {client} export={watched_export}")
+            methods = run_observe(
+                client_path=client,
+                needle=f"{magic}-diod-{cache}",
+                timeout=timeout,
+                export_path=watched_export,
+            )
+            cl = classify(cache, methods)
+            cases.append(
+                {
+                    "server": "diod",
+                    "cache": cache,
+                    "methods": methods,
+                    **cl,
+                }
+            )
+            _umount(mnt)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        _umount(mnt)
+        subprocess.call(
+            ["umount", "-l", base], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    return cases
+
+
+def cmd_guest(args: argparse.Namespace) -> int:
+    logdir = args.logdir or _repo_logs()
+    os.makedirs(logdir, exist_ok=True)
+    magic_file = os.path.join(logdir, "tail-follow.magic")
+    if os.path.isfile(magic_file):
+        magic = open(magic_file, encoding="utf-8").read().strip() or args.magic
+    else:
+        magic = args.magic
+        write_atomic(magic_file, magic + "\n")
+
+    watched = os.path.join(logdir, "tail-follow.watched")
+    if not os.path.exists(watched):
+        with open(watched, "w", encoding="utf-8") as f:
+            f.write("initial-line\n")
+
+    cases: List[Dict[str, Any]] = []
+    cases.extend(_guest_qemu_virtio(logdir, magic, args.timeout))
+    cases.extend(_guest_diod(logdir, magic, args.timeout))
+
+    if not cases:
+        log("ERROR: no cases ran")
+        return 2
+
+    print_table(cases)
+    report = {
+        "issue": ISSUE_URL,
+        "mode": "guest",
+        "cases": cases,
+        "summary": summarize(cases),
+    }
+    report_path = os.path.join(logdir, "tail-follow.report.json")
+    write_atomic(report_path, json.dumps(report, indent=2) + "\n")
+    log(f"wrote {report_path}")
+    print(json.dumps(report, indent=2))
+
+    fails = [c for c in cases if c["verdict"] == "FAIL"]
+    if fails:
+        log(f"{len(fails)} required case(s) FAILED (issue #3 still present or fix incomplete)")
+        return 1
+    log("no required failures")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def add_common(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="seconds to wait after arming")
+        sp.add_argument("--magic", default=DEFAULT_MAGIC, help="needle line the server appends")
+
+    s = sub.add_parser("selftest", help="local file control; no 9p/QEMU")
+    add_common(s)
+    s.set_defaults(func=cmd_selftest)
+
+    o = sub.add_parser("observe", help="watch a client path; optional --export to append")
+    add_common(o)
+    o.add_argument("--watched", required=True, help="path as seen by the 9p client")
+    o.add_argument("--export", default=None, help="server backing path to append (omit to wait for an external writer)")
+    o.add_argument("--ready", default=None, help="create this file once watchers are armed")
+    o.add_argument("--cache", default="unknown", help="cache mode label for the report")
+    o.add_argument("--server", default="manual", help="server label for the report")
+    o.add_argument("--report", default=None, help="write JSON report here")
+    o.set_defaults(func=cmd_observe)
+
+    g = sub.add_parser("guest", help="QEMU chroot: virtio cache matrix + optional diod")
+    add_common(g)
+    g.add_argument("--logdir", default=None, help="directory for ready/watched/report (default: repo logs/)")
+    g.set_defaults(func=cmd_guest)
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

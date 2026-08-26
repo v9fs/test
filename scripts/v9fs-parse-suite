@@ -15,7 +15,7 @@ dialect=""
 cache="loose"
 
 case "$tests" in
-  smoke|fsx|postmark|dbench|diod-regression|fstest)
+  smoke|fsx|postmark|dbench|diod-regression|fstest|tail-follow)
     kind="$tests"
     ;;
   qemu-*|diod-*)

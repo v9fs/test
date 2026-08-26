@@ -21,6 +21,11 @@ eval "$(./scripts/v9fs-parse-suite "${tests}")"
 # Prepare extra binaries when requested.
 case "${kind}" in
   smoke) ;;
+  tail-follow)
+    # Optional: guest also exercises diod as a second server. Keep qemu-virtio
+    # working if the package install fails.
+    ./scripts/v9fs-prepare-diod-server || echo "WARNING: diod not prepared; virtio cases still run"
+    ;;
   fsx|postmark|dbench)
     ./scripts/v9fs-prepare-benchmarks
     ;;
@@ -45,7 +50,14 @@ esac
 export V9FS_TESTS="${tests}"
 export V9FS_BOOTVER="${dialect:-9p2000.L}"
 export V9FS_CACHE="${cache:-loose}"
-if [ "${kind}" != "protocol" ]; then
+if [ "${kind}" = "tail-follow" ]; then
+  # Boot the chroot on cache=none so guest scripts/ready files are not loose-cached.
+  # Extra virtio tags (same export, distinct channels) let the guest mount
+  # cache=none/readahead/mmap/loose without remounting hostshare (already /).
+  export V9FS_BOOTVER="9p2000.L"
+  export V9FS_CACHE="none"
+  export V9FS_EXTRA_9P_TAGS="${V9FS_EXTRA_9P_TAGS:-tf-none,tf-readahead,tf-mmap,tf-loose}"
+elif [ "${kind}" != "protocol" ]; then
   export V9FS_BOOTVER="9p2000.L"
   export V9FS_CACHE="loose"
 fi
@@ -57,11 +69,47 @@ export INITRD="${INITRD:-/opt/v9fs/initrd.patched.cpio}"
 # Pass timestamp so uinit writes guest.exitcode into logs/<ts>/.
 export EXTRA_APPEND="v9fs.ts=${TIMESTAMP} v9fs.tests=${tests}"
 
+if [ "${kind}" = "tail-follow" ]; then
+  # Host-side half of issue #3: the QEMU 9p server backing store.
+  # Guest arms watchers then creates logs/tail-follow.ready; we append.
+  magic="V9FS-TAIL-FOLLOW-${TIMESTAMP}"
+  printf '%s\n' "${magic}" >"logs/tail-follow.magic"
+  printf 'initial-line\n' >"logs/tail-follow.watched"
+  rm -f logs/tail-follow.ready logs/tail-follow.appended
+  cp -f logs/tail-follow.magic "logs/${TIMESTAMP}/tail-follow.magic"
+  cp -f logs/tail-follow.watched "logs/${TIMESTAMP}/tail-follow.watched"
+  echo "host: tail-follow magic=${magic}"
+fi
+
 # Run QEMU daemonized, but stream qemu.log into docker logs.
 export QEMU_DAEMONIZE=1
 export QEMU_STREAM_LOG=0
 
 /home/v9fs-test/test/qemu.bash
+
+append_pid=""
+if [ "${kind}" = "tail-follow" ] && [ -f "${PIDFILE}" ]; then
+  qemu_pid="$(cat "${PIDFILE}")"
+  (
+    for _ in $(seq 1 600); do
+      if [ -f logs/tail-follow.ready ]; then
+        magic="$(tr -d '\n' <logs/tail-follow.magic)"
+        printf '%s\n' "${magic}" >>logs/tail-follow.watched
+        date +%s >logs/tail-follow.appended
+        echo "host: appended magic to logs/tail-follow.watched"
+        exit 0
+      fi
+      kill -0 "${qemu_pid}" 2>/dev/null || {
+        echo "host: QEMU exited before tail-follow.ready"
+        exit 1
+      }
+      sleep 0.1
+    done
+    echo "host: timeout waiting for logs/tail-follow.ready"
+    exit 1
+  ) &
+  append_pid="$!"
+fi
 
 # Allow slower suites to complete before we kill QEMU.
 # The guest is expected to power off when done.
@@ -69,6 +117,7 @@ wait_secs="${WAIT_SECS:-}"
 if [ -z "${wait_secs}" ]; then
   case "${kind}" in
     smoke) wait_secs=180 ;;
+    tail-follow) wait_secs=240 ;;
     fsx|postmark|dbench) wait_secs=900 ;;
     diod-regression) wait_secs=2400 ;;
     fstest) wait_secs=1200 ;;
@@ -98,6 +147,10 @@ if [ -n "${tail_pid}" ]; then
   kill "${tail_pid}" 2>/dev/null || true
 fi
 
+if [ -n "${append_pid}" ]; then
+  wait "${append_pid}" 2>/dev/null || true
+fi
+
 chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 
 guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
@@ -113,8 +166,14 @@ fi
 if [ -f "logs/dmesg.log" ]; then
   cp -f "logs/dmesg.log" "logs/${TIMESTAMP}/dmesg.log" 2>/dev/null || true
 fi
-if [ -f "logs/meminfo.txt" ]; then
-  cp -f "logs/meminfo.txt" "logs/${TIMESTAMP}/meminfo.txt" 2>/dev/null || true
+if [ -f "logs/tail-follow.report.json" ]; then
+  cp -f "logs/tail-follow.report.json" "logs/${TIMESTAMP}/tail-follow.report.json" 2>/dev/null || true
+fi
+if [ -f "logs/tail-follow.log" ]; then
+  cp -f "logs/tail-follow.log" "logs/${TIMESTAMP}/tail-follow.log" 2>/dev/null || true
+fi
+if [ -f "logs/tail-follow.diod.log" ]; then
+  cp -f "logs/tail-follow.diod.log" "logs/${TIMESTAMP}/tail-follow.diod.log" 2>/dev/null || true
 fi
 
 if [ ! -f "${guest_rc_file}" ]; then

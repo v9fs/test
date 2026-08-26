@@ -1,5 +1,6 @@
 ## TODO
 
+- Land kernel fixes for v9fs/linux#3 (`tail -f` misses server appends) and turn `make docker-tail-follow` green for cache=none/mmap/readahead. Do not add it to the CI matrix until then.
 - Enable weekly cron on `kconfig-compile.yml` once the compile flavors stay green (#8).
 - Expand `fstest` from the mkdir/open/unlink/rename subset to full pjdfstest with a real `fstest/xfail.txt` (#7).
 - Add `diod-9p2000` / `diod-9p2000.u` matrix cells once qemu legacy dialects are boringly green (#10).

@@ -42,6 +42,24 @@ qemu_args=(
   -append "${APPEND} ${EXTRA_APPEND:-}"
 )
 
+# Extra virtio-9p channels (same host path, distinct tags). cache= is a
+# mount option; the guest remounts each tag. One tag cannot be mounted twice
+# (hostshare is already / after chroot).
+if [ -n "${V9FS_EXTRA_9P_TAGS:-}" ]; then
+  i=1
+  IFS=',' read -ra _tags <<< "${V9FS_EXTRA_9P_TAGS}"
+  for tag in "${_tags[@]}"; do
+    tag="${tag//[[:space:]]/}"
+    [ -n "${tag}" ] || continue
+    qemu_args+=(
+      -fsdev "local,security_model=none,writeout=immediate,id=fsdev${i},path=${FSDEV_PATH}"
+      -device "virtio-9p-pci,id=fs${i},fsdev=fsdev${i},mount_tag=${tag}"
+    )
+    echo "qemu: extra 9p tag=${tag} id=fsdev${i}" >&2
+    i=$((i + 1))
+  done
+fi
+
 if [ "${QEMU_DAEMONIZE}" = "1" ]; then
   qemu_args+=(
     -serial "file:${LOG}"

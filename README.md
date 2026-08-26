@@ -34,6 +34,27 @@ docker run --rm --privileged --user 0:0 \
 
 Suites: `smoke`, `fsx`, `postmark`, `dbench`, `diod-regression`, `fstest`, `qemu-9p2000`, `qemu-9p2000.u`, `qemu-9p2000.L`, `qemu-9p2000.L-none`, `diod-9p2000.L`.
 
+### Issue #3: `tail -f` vs server-side append (standalone)
+
+[v9fs/linux#3](https://github.com/v9fs/linux/issues/3): `tail -f` on a 9p file never sees data appended on the **server** (host export / diod backing store). This unit test is **not** on the CI matrix so it can be iterated on alone.
+
+```bash
+# No kernel, no Docker: proves inotify/stat/tail watchers work on a local file.
+make tail-follow-selftest
+
+# Already have a 9p mount? Watch the client path, append to the export:
+./scripts/v9fs-tail-follow observe \
+  --watched /mnt/9p/log --export /export/log --cache none --server diod
+
+# Full virtio-9p repro (and diod inside the guest if packaged):
+# needs arm64 Image at ./kernel/.build/arch/arm64/boot/Image
+make docker-tail-follow
+```
+
+The report (`logs/tail-follow.report.json`) is a cache × method matrix (`inotify`, `fstat_size`, `fd_read`, `stat_size`, `tail`, `reopen`) so a kernel fix can be scored against the options in the issue (drop inotify so tail polls, getattr on open files, TTL revalidate, …). Each case includes a `note` that maps the pattern onto those options. `cache=loose` live-follow is XFAIL; `cache=none`/`mmap`/`readahead` live-follow is required and currently expected to FAIL on mainline (that is the #3 repro). Do not add this suite to `.github/workflows/ci.yml` until those required cells go green.
+
+`make docker-tail-follow` boots extra virtio-9p channels (`tf-none`, `tf-readahead`, `tf-mmap`, `tf-loose`) so each cache mode is a distinct mount — `hostshare` is already `/` in the guest and cannot be remounted. `DOCKER=podman make docker-tail-follow` works when the docker socket is unavailable.
+
 ## GitHub Actions
 
 Kernel **build** and **test** are separate. Images are GitHub Release assets (not GHCR).

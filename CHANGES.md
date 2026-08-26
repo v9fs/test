@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Add a standalone `tail -f` / server-append unit test for v9fs/linux#3 (`scripts/v9fs-tail-follow`). `make tail-follow-selftest` runs with no QEMU; `make docker-tail-follow` is the virtio (and optional diod) repro, not on the CI matrix. Extra QEMU 9p tags cover cache=none/mmap/readahead/loose; the JSON `note` scores fix options from the method matrix.
 - Docs: README/TODO match current workflows (`ci.yml`, publish, sync); drop stale `demand.yml`/`nightly.yml` (#3, #15).
 - Fail guest-direct runs on kernel BUG/Oops/`WARNING: CPU:`/`hung_task` in qemu serial or `dmesg` (`scripts/v9fs-scan-klog`, `klog/allow.txt`) (#4).
 - Sync publishes `kernel-main` / `kernel-for-next` / `kernel-fixes` when those `v9fs/linux` SHAs change; record SHA in Image release notes (#5, #6).

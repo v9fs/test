@@ -90,6 +90,15 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=${cache}" hostshare /mn
             2>&1 | tee /home/v9fs-test/test/logs/fstest.log
         ' || rc=$?
         ;;
+      tail-follow)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
+          set -euo pipefail
+          mkdir -p /home/v9fs-test/test/logs
+          python3 /home/v9fs-test/test/scripts/v9fs-tail-follow guest \
+            --logdir /home/v9fs-test/test/logs \
+            2>&1 | tee /home/v9fs-test/test/logs/tail-follow.log
+        ' || rc=$?
+        ;;
       diod-regression)
         # Run a subset of diod's kernel-client regression tests (sharness) inside the guest.
         # Build artifacts are prepared on the host side under /workspaces/tmp/diod-build.
