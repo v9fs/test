@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Per-test wrapper: timeout the sharness script, then drop leftover unix 9p
+# mounts / diod so test_diodrun --socktest cannot wedge make check.
+set -u
+secs="${1:-300}"
+shift
+set +e
+timeout --foreground -k 10 "$secs" "$@"
+rc=$?
+set -e
+if [ -r /proc/self/mountinfo ]; then
+  while read -r _ _ _ _ mnt _; do
+    case "$mnt" in
+      /tmp/sharness-trash/*|/tmp/diodrun.*)
+        umount -l "$mnt" 2>/dev/null || true
+        ;;
+    esac
+  done < /proc/self/mountinfo
+fi
+pkill -x diod 2>/dev/null || true
+# Give diodrun a moment to observe conn drop / child exit.
+sleep 1
+exit "$rc"

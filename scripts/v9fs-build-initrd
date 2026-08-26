@@ -98,8 +98,6 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           # Per-test timeout (LOG_COMPILER) so a hung script FAILs that test instead of
           # stalling the whole suite under a single outer timeout.
           set +e
-          # Outer timeout so a wedged diodrun (live mount + --socktest) cannot
-          # pin the guest until the qemu wait_secs limit.
           timeout 1500 sudo -u v9fs -H stdbuf -oL -eL make -C t check \
             LOG_COMPILER=timeout \
             AM_LOG_FLAGS=300 \
@@ -113,13 +111,13 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           " 2>&1 | tee "$make_out"
           make_rc="${PIPESTATUS[0]}"
           set -e
-          # If a timed-out test left a live unix 9p mount, drop it so diod
-          # --socktest / diodrun can exit instead of hanging until qemu timeout.
+          # Drop leftover unix 9p mounts so diod --socktest / diodrun can exit.
           if [ -r /proc/self/mountinfo ]; then
-            awk '/9p/ && /trans=unix/ {print $5}' /proc/self/mountinfo \
-              | while read -r mnt; do
-                  umount -l "$mnt" 2>/dev/null || true
-                done
+            while read -r _ _ _ _ mnt _; do
+              case "$mnt" in
+                /tmp/*) umount -l "$mnt" 2>/dev/null || true ;;
+              esac
+            done < /proc/self/mountinfo
           fi
           pkill -x diod 2>/dev/null || true
           pkill -x test_diodrun 2>/dev/null || true
