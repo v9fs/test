@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v10}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v11}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -137,24 +137,16 @@ old_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
 '
 """
 new_mount = """test_expect_success 'mount filesystem with access=<uid> on mnt' '
-	dbg=/home/v9fs-test/test/logs/diod-t0010-mount-debug.txt &&
-	mkdir -p /home/v9fs-test/test/logs &&
 	set +e &&
 	$mountcmd -oaname=$exportdir,$mountopts,access=$(id -u) \\
 	    $DIOD_SOCKET mnt >mount.stdout 2>mount.stderr
-	echo $? >mount.rc
-	{
-	  echo "mount_rc=$(cat mount.rc)"
-	  echo "exportdir=$exportdir"
-	  id
-	  cat mount.stderr
-	  timeout 5 stat -f -c "type=%t" mnt
-	  cat "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log"
-	} >"$dbg" 2>&1
-	cp -f "$dbg" /home/v9fs-test/test/logs/diod-t0010-mount-debug.txt
+	echo $? >mount.rc &&
+	echo "diod-t0010: mount_rc=$(cat mount.rc)" >&2 &&
+	timeout 5 stat -f -c "type=%t" mnt >&2 &&
+	cp -f mount.stderr /tmp/diod-t0010-mount.stderr &&
 	cp -f "${SHARNESS_TEST_DIRECTORY:-..}/$SHARNESS_TEST_NAME.diod.log" \\
-	  /home/v9fs-test/test/logs/t0010-v9fs-runasuser.t.diod.log
-	set -e &&
+	  /tmp/diod-t0010.diod.log &&
+	set +e &&
 	test "$(cat mount.rc)" = "0"
 '
 """
@@ -170,10 +162,10 @@ old_stat = """test_expect_success STAT 'file system type is v9fs' '
 '
 """
 new_stat = """test_expect_success STAT 'file system type is v9fs' '
-	echo NEXT_stat_type &&
+	echo NEXT_stat_type >&2 &&
 	echo 1021997 >type.exp &&
 	timeout 30 stat -f -c \"%t\" mnt >type.out &&
-	echo NEXT_stat_type_done &&
+	echo NEXT_stat_type_done >&2 &&
 	test_cmp type.exp type.out
 '
 """
