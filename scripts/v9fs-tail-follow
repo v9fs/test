@@ -17,8 +17,9 @@ apart the issue-#3 fix options:
   stat_size   stat(2) on the path (may revalidate the dentry)
   reopen      close, open, read (close-to-open)
 
-cache=loose / fscache live-follow is XFAIL (documented non-coherent).
-cache=none / readahead / mmap live-follow is required: a FAIL there is #3.
+cache=loose / fscache live-follow is unsupported (XFAIL).
+Coherent virtio GNU tail -f is a known legacy bug (linux#3): catalogued in
+expected/legacy.txt as XFAIL, not a regression. Unexpected FAIL is a regression.
 """
 
 from __future__ import annotations
@@ -37,6 +38,13 @@ import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+import v9fs_expected  # noqa: E402
+
+_LEGACY = v9fs_expected.load()
 
 ISSUE_URL = "https://github.com/v9fs/linux/issues/3"
 DEFAULT_MAGIC = "V9FS-TAIL-FOLLOW-MAGIC"
@@ -334,26 +342,36 @@ def diagnose(cache: str, methods: Dict[str, Any]) -> str:
     return "; ".join(hints)
 
 
-def classify(cache: str, methods: Dict[str, Any]) -> Dict[str, Any]:
-    """required live-follow for coherent caches; XFAIL live-follow on loose."""
+def classify(
+    cache: str, methods: Dict[str, Any], server: str = ""
+) -> Dict[str, Any]:
+    """PASS/FAIL from methods, then remap via expected/legacy.txt."""
     incoherent = cache in INCOHERENT_CACHES
     live_ok = all(methods[m]["saw"] for m in LIVE_METHODS)
     reopen_ok = methods["reopen"]["saw"]
     note = diagnose(cache, methods)
     if incoherent:
-        # Live follow is not part of the contract. reopen may still fail.
         if not any(methods[m]["saw"] for m in ALL_METHODS):
-            return {"verdict": "XFAIL", "required": False, "note": note}
-        if live_ok:
-            return {"verdict": "XPASS", "required": False, "note": note}
-        return {"verdict": "XFAIL", "required": False, "note": note}
-    # Coherent caches: issue #3 is GNU tail -f vs a server append. inotify /
-    # fstat / stat remain in the matrix so we can score fix options; they do
-    # not gate the verdict (a "stop advertising inotify" kernel change should
-    # be allowed to go green once tail polls).
-    if methods["tail"]["saw"] and reopen_ok:
-        return {"verdict": "PASS", "required": True, "note": note}
-    return {"verdict": "FAIL", "required": True, "note": note}
+            raw = {"verdict": "XFAIL", "required": False, "note": note}
+        elif live_ok:
+            raw = {"verdict": "XPASS", "required": False, "note": note}
+        else:
+            raw = {"verdict": "XFAIL", "required": False, "note": note}
+    elif methods["tail"]["saw"] and reopen_ok:
+        raw = {"verdict": "PASS", "required": True, "note": note}
+    else:
+        raw = {"verdict": "FAIL", "required": True, "note": note}
+
+    exp = (
+        v9fs_expected.lookup_cell(_LEGACY, "tail-follow", server, cache)
+        if server
+        else None
+    )
+    extra = v9fs_expected.apply_expected(raw["verdict"], exp)
+    if extra.get("note_prefix"):
+        raw["note"] = str(extra.pop("note_prefix")) + raw["note"]
+    raw.update(extra)
+    return raw
 
 
 def print_table(cases: List[Dict[str, Any]]) -> None:
@@ -367,6 +385,7 @@ def print_table(cases: List[Dict[str, Any]]) -> None:
         "tail",
         "reopen",
         "verdict",
+        "issue",
     )
     rows = [cols]
     for c in cases:
@@ -386,6 +405,7 @@ def print_table(cases: List[Dict[str, Any]]) -> None:
                 yn("tail"),
                 yn("reopen"),
                 c["verdict"],
+                c.get("issue") or "",
             )
         )
     widths = [max(len(str(r[i])) for r in rows) for i in range(len(cols))]
@@ -480,6 +500,18 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         if loose["verdict"] != "XFAIL" or loose["required"]:
             log(f"ERROR: classify(loose) unexpected {loose}")
             return 2
+        cataloged = classify("none", only_reopen, server="qemu-virtio")
+        if cataloged["verdict"] != "XFAIL" or cataloged.get("issue") != "linux#3":
+            log(f"ERROR: catalog qemu-virtio none should XFAIL linux#3, got {cataloged}")
+            return 2
+        catalog_pass = classify("none", tail_ok, server="qemu-virtio")
+        if catalog_pass["verdict"] != "XPASS":
+            log(f"ERROR: catalog qemu-virtio none PASS should XPASS, got {catalog_pass}")
+            return 2
+        diod_pass = classify("none", tail_ok, server="diod")
+        if diod_pass["verdict"] != "PASS":
+            log(f"ERROR: diod none is not catalogued, expected PASS, got {diod_pass}")
+            return 2
 
         print_table([case])
         report = {
@@ -512,7 +544,7 @@ def cmd_observe(args: argparse.Namespace) -> int:
         "server": args.server,
         "cache": cache,
         "methods": methods,
-        **classify(cache, methods),
+        **classify(cache, methods, server=args.server),
     }
     print_table([case])
     report = {
@@ -627,7 +659,7 @@ def _guest_qemu_virtio(logdir: str, magic: str, timeout: float) -> List[Dict[str
     cases = []
     for cache, w in watchers.items():
         methods = w.result()
-        cl = classify(cache, methods)
+        cl = classify(cache, methods, server="qemu-virtio")
         cases.append(
             {
                 "server": "qemu-virtio",
@@ -734,7 +766,7 @@ def _guest_diod(logdir: str, magic: str, timeout: float) -> List[Dict[str, Any]]
                 timeout=timeout,
                 export_path=watched_export,
             )
-            cl = classify(cache, methods)
+            cl = classify(cache, methods, server="diod")
             cases.append(
                 {
                     "server": "diod",
@@ -793,10 +825,19 @@ def cmd_guest(args: argparse.Namespace) -> int:
     print(json.dumps(report, indent=2))
 
     fails = [c for c in cases if c["verdict"] == "FAIL"]
+    xfails = [c for c in cases if c["verdict"] == "XFAIL"]
+    xpasses = [c for c in cases if c["verdict"] == "XPASS"]
     if fails:
-        log(f"{len(fails)} required case(s) FAILED (issue #3 still present or fix incomplete)")
+        log(f"{len(fails)} unexpected FAIL (regression, not in expected/legacy.txt)")
         return 1
-    log("no required failures")
+    if xpasses:
+        log(
+            f"{len(xpasses)} XPASS: update expected/legacy.txt "
+            "(catalogued fail now passes)"
+        )
+    if xfails:
+        log(f"{len(xfails)} known-legacy XFAIL (not a regression)")
+    log("no unexpected failures")
     return 0
 
 

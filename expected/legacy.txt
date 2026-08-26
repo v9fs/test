@@ -1,0 +1,29 @@
+# Known-legacy expected results. These are previously undetected gaps (or
+# explicitly unsupported contracts), not regressions against a newer kernel.
+#
+# When you add a test that fails on current mainline because the bug/feature
+# was never there, record it here in the same change. The harness then reports
+# XFAIL and the dashboard delta is "new (legacy)" instead of a red fail.
+#
+# When a kernel fix lands, delete the matching line(s). An XPASS (catalog says
+# fail, test now passes) is a reminder to do that.
+#
+# Lines (whitespace-separated; note is the remainder of the line):
+#
+#   suite <name>              <kind> <issue> <note...>
+#   cell  <suite> <server> <cache> <kind> <issue> <note...>
+#
+# kind:  bug          should become PASS after a fix (track progress)
+#        unsupported  not part of the contract (e.g. cache=loose coherence)
+# issue: linux#N, test#N, or -
+#
+# Sharness-level diod residuals stay in diod/xfail.txt (different log format).
+
+# v9fs/linux#3: GNU tail -f misses a virtio-9p server append. Size/stat often
+# work; inotify is silent so tail does not poll. diod coherent caches already
+# tail -f via poll and are not listed (expected PASS).
+cell tail-follow qemu-virtio none      bug         linux#3 GNU tail -f misses virtio server append
+cell tail-follow qemu-virtio readahead bug         linux#3 GNU tail -f misses virtio append; fstat vs page cache
+cell tail-follow qemu-virtio mmap      bug         linux#3 GNU tail -f misses virtio append; fstat vs page cache
+cell tail-follow qemu-virtio loose     unsupported -       cache=loose is not coherent
+cell tail-follow diod        loose     unsupported -       cache=loose is not coherent

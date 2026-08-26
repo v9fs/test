@@ -106,6 +106,7 @@ jobs:
           - qemu-9p2000.u
           - qemu-9p2000.L
           - qemu-9p2000.L-none
+          - tail-follow
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       KERNEL_RELEASE: ${{ needs.resolve.outputs.kernel_release }}

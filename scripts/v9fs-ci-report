@@ -28,8 +28,14 @@ fi
 export JOBS_JSON="${jobs_json}"
 
 python3 - <<'PY'
-import json, os, pathlib, re, shutil, subprocess, tempfile
+import json, os, pathlib, re, shutil, subprocess, sys, tempfile
 from datetime import datetime, timezone
+
+sys.path.insert(0, str(pathlib.Path("scripts").resolve()))
+import v9fs_expected
+
+legacy_entries = v9fs_expected.load()
+legacy_suites = {e.suite for e in legacy_entries}
 
 repo = os.environ["GITHUB_REPOSITORY"]
 run_id = int(os.environ["GITHUB_RUN_ID"])
@@ -49,16 +55,30 @@ for job in job_list:
     m = pat.match(job.get("name") or "")
     if not m:
         continue
+    name = m.group(1)
     conclusion = job.get("conclusion") or job.get("status") or "unknown"
     if conclusion == "success":
-        status = "pass"
+        status = "xfail" if name in legacy_suites else "pass"
     elif conclusion == "skipped":
         status = "skip"
     elif conclusion in ("failure", "timed_out", "cancelled"):
+        # Catalogued suites should finish green (XFAIL inside the guest). A red
+        # job is an unexpected failure on top of the legacy baseline.
         status = "fail"
     else:
         status = str(conclusion)
-    suites[m.group(1)] = {"status": status, "xfail": False}
+    issues = sorted(
+        {
+            e.issue
+            for e in legacy_entries
+            if e.suite == name and e.issue and e.issue != "-"
+        }
+    )
+    suites[name] = {
+        "status": status,
+        "xfail": status == "xfail" or name in legacy_suites,
+        "issue": ",".join(issues),
+    }
 
 payload = {
     "kernel_release": kernel_release,
@@ -105,20 +125,33 @@ lines = [
     "| --- | --- | --- |",
 ]
 prev_suites = (prev or {}).get("suites") or {}
+
+def status_delta(old, cur):
+    if old is None:
+        if cur == "xfail":
+            return "new (legacy)"
+        return "new"
+    if old == cur:
+        return "—"
+    if cur == "fail" and old in ("pass", "xfail"):
+        return "**REGRESSED**"
+    if cur in ("pass", "xfail") and old == "fail":
+        return "improved"
+    if cur == "pass" and old == "xfail":
+        return "improved"
+    if cur == "xfail" and old == "fail":
+        return "classified legacy"
+    if cur == "xfail" and old == "pass":
+        return "now tracked as legacy"
+    return f"{old}→{cur}"
+
 for suite, info in payload["suites"].items():
     cur = info.get("status", "?")
     old = (prev_suites.get(suite) or {}).get("status")
-    if old is None:
-        delta = "new"
-    elif old == cur:
-        delta = "—"
-    elif old == "pass" and cur == "fail":
-        delta = "**REGRESSED**"
-    elif old == "fail" and cur == "pass":
-        delta = "improved"
-    else:
-        delta = f"{old}→{cur}"
-    lines.append(f"| {suite} | {cur} | {delta} |")
+    delta = status_delta(old, cur)
+    issue = info.get("issue") or ""
+    label = f"{cur}" + (f" ({issue})" if issue and cur == "xfail" else "")
+    lines.append(f"| {suite} | {label} | {delta} |")
 
 diff_path = outdir / "diff-report.md"
 diff_path.write_text("\n".join(lines) + "\n")
@@ -157,17 +190,14 @@ try:
     for suite, info in payload["suites"].items():
         cur = info.get("status", "?")
         old = (prev_suites.get(suite) or {}).get("status")
-        if old is None:
-            delta = "new"
-        elif old == cur:
-            delta = "—"
-        elif old == "pass" and cur == "fail":
-            delta = "regressed"
-        elif old == "fail" and cur == "pass":
-            delta = "improved"
+        delta = status_delta(old, cur)
+        issue = info.get("issue") or ""
+        if info.get("xfail") and issue:
+            note = f"legacy {issue}"
+        elif info.get("xfail"):
+            note = "legacy xfail"
         else:
-            delta = f"{old}→{cur}"
-        note = "xfail baseline" if info.get("xfail") else ""
+            note = ""
         body.append(f"| {suite} | {cur} | {delta} | {note} |")
     body.extend(["", f"Updated: {payload['generated_at']}", ""])
     (pathlib.Path(wdir) / "Regression-Dashboard.md").write_text("\n".join(body))

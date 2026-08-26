@@ -51,9 +51,20 @@ make tail-follow-selftest
 make docker-tail-follow
 ```
 
-The report (`logs/tail-follow.report.json`) is a cache × method matrix (`inotify`, `fstat_size`, `fd_read`, `stat_size`, `tail`, `reopen`) so a kernel fix can be scored against the options in the issue (drop inotify so tail polls, getattr on open files, TTL revalidate, …). Each case includes a `note` that maps the pattern onto those options. The **verdict** for coherent caches (`none` / `mmap` / `readahead`) is GNU `tail -f` (plus reopen); inotify/fstat/stat are diagnostic and do not gate PASS. `cache=loose` live-follow is XFAIL. On current mainline, qemu-virtio `tail -f` is expected to FAIL (the #3 repro); diod may already `tail -f` via poll even when inotify is silent. Do not add this suite to `.github/workflows/ci.yml` until the required virtio cells go green.
+The report (`logs/tail-follow.report.json`) is a cache × method matrix (`inotify`, `fstat_size`, `fd_read`, `stat_size`, `tail`, `reopen`) so a kernel fix can be scored against the options in the issue (drop inotify so tail polls, getattr on open files, TTL revalidate, …). Each case includes a `note` that maps the pattern onto those options. The **verdict** for coherent caches is GNU `tail -f` (plus reopen). Known-legacy cells are listed in [`expected/legacy.txt`](expected/legacy.txt) and show as **XFAIL** (not a regression); an unexpected **FAIL** is a real regression. **XPASS** means a catalogued bug now passes — delete that line from the catalog. `cache=loose` is unsupported (incoherent).
 
-`make docker-tail-follow` boots extra virtio-9p channels (`tf-none`, `tf-readahead`, `tf-mmap`, `tf-loose`) so each cache mode is a distinct mount — `hostshare` is already `/` in the guest and cannot be remounted. `DOCKER=podman make docker-tail-follow` works when the docker socket is unavailable.
+`make docker-tail-follow` boots extra virtio-9p channels (`tf-none`, `tf-readahead`, `tf-mmap`, `tf-loose`) so each cache mode is a distinct mount — `hostshare` is already `/` in the guest and cannot be remounted. `DOCKER=podman make docker-tail-follow` works when the docker socket is unavailable. The suite is on the CI matrix: guest rc is 0 while only catalogued XFAILs remain, and the dashboard records `xfail` / `new (legacy)` rather than a tip regression.
+
+### Expected results (legacy vs regression)
+
+New tests that fail because the kernel never had the behavior go in `expected/legacy.txt` in the same change. Format:
+
+```
+suite <name> <kind> <issue> <note...>
+cell  <suite> <server> <cache> <kind> <issue> <note...>
+```
+
+`kind` is `bug` (track until a fix) or `unsupported` (not in the contract). The dashboard treats catalogued green jobs as `xfail` with delta **new (legacy)** the first time they appear, and **REGRESSED** only for unexpected `fail`. Per-test residuals that are not CI-job-shaped (diod sharness) stay in `diod/xfail.txt`.
 
 ## GitHub Actions
 
