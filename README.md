@@ -13,7 +13,9 @@ Guest-direct: QEMU arm64 + virtio-9p export of the container root, initrd mounts
 ```bash
 docker pull ghcr.io/v9fs/docker:latest
 # Place arm64 Image at ./kernel/.build/arch/arm64/boot/Image
-# (or: gh release download kernel-latest -p Image -D kernel/.build/arch/arm64/boot)
+# or download with gh (optional gitignored .env with GH_TOKEN=...):
+#   set -a && source .env && set +a
+#   gh release download kernel-latest -p Image -D kernel/.build/arch/arm64/boot
 make docker-smoke
 ```
 
@@ -62,10 +64,12 @@ Example: `https://github.com/v9fs/test/releases/download/kernel-latest/Image`
 
 - `V9FS_LINUX_SYNC_TOKEN` — Contents write on `v9fs/linux`, Actions + Contents on `v9fs/test` (sync, publish chaining, wiki, attach reports).
 
+Local host-side `gh` (release download, `act --secret-file .env`): put `GH_TOKEN=...` in a repo-root `.env` (gitignored). Do not pass that file into the QEMU/test container.
+
 Do **not** add `.github` workflows to `v9fs/linux`.
 
 ## Repo hygiene
 
 - Active work: `main` (via PRs). Keep `CHANGES.md` and `TODO.md` updated.
-- Do not commit `logs/`, `kernel/`, `tmp/`, generated initrds.
+- Do not commit `logs/`, `kernel/`, `tmp/`, generated initrds, or `.env`.
 - Guest-direct only. SSH/`cpu` helpers under `old/rework-take-1/` are unsupported.
