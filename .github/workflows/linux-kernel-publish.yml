@@ -1,3 +1,8 @@
+# Lives in v9fs/test only (#15). Do not add a copy to v9fs/linux.
+#
+# Triggers: workflow_dispatch here, or `gh workflow run` from
+# sync-torvalds-linux.yml. repository_dispatch (publish-kernel-image) is
+# emergency/manual only — linux is mirror-only and must not fire it.
 name: Publish Linux kernel (arm64 Image)
 
 on:

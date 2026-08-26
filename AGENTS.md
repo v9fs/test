@@ -5,7 +5,7 @@ Tweak freely.
 
 ## Branching and change hygiene
 
-- Do active work on `rework` unless told otherwise.
+- Do active work on `main` unless told otherwise.
 - Keep `README.md`, `CHANGES.md`, and `TODO.md` updated as changes land.
 - Do not commit generated outputs (`logs/`, `kernel/`, `tmp/`, `initrd.cpio`, pid files).
 
@@ -38,8 +38,8 @@ Tweak freely.
   - **Kernel publishing** workflow: builds `v9fs/linux` arm64 `Image` and publishes it.
   - **Harness CI** workflows: download a published kernel `Image` and run tests.
 - Publishing:
-  - Prefer a stable, `wget`-able GitHub Release asset `Image` tagged `kernel-main`, `kernel-nightly`, or `kernel-<version>`.
-  - GHCR is optional/secondary; keep it consistent if used.
+  - Prefer a stable, `wget`-able GitHub Release asset `Image` tagged `kernel-latest`, `kernel-main`, or `kernel-<version>`.
+  - Do not add workflows to `v9fs/linux`; sync and publish are owned by this repo.
 
 ## Logging and debuggability
 
