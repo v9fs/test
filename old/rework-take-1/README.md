@@ -1,3 +1,9 @@
+# v9fs test harness (historical snapshot)
+
+This directory is tag `rework-take-1`. It is **not** used by CI.
+
+Active workflows live only at the repository root `.github/workflows/` (`ci.yml`, `linux-kernel-publish.yml`, `sync-torvalds-linux.yml`). The take-1 YAML that used to sit in `.github/workflows/` here (`demand.yml`, `nightly.yml`, …) has been removed so it cannot be mistaken for live Actions.
+
 # v9fs test harness
 
 This repository contains **test code and scripts** for exercising the Linux **9p (v9fs)** filesystem.

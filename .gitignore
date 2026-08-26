@@ -3,3 +3,4 @@ kernel/
 tmp/
 initrd.cpio
 qemu.pid
+.env
