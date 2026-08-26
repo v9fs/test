@@ -256,9 +256,9 @@ if grep -rhq 'test_under_diod unixsocket ' "${src}/t" --include='*.t' 2>/dev/nul
   grep -rn 'test_under_diod unixsocket ' "${src}/t" --include='*.t' >&2 || true
   exit 1
 fi
-grep -q 'diod-t0010-mount-debug' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'version=9p2000.L' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'v9fs_access_mount' "${src}/t/t0010-v9fs-runasuser.t"
+grep -q 'NEXT_stat_type' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'V9FS_MOUNT_9P' "${src}/t/sharness.d/20-diod.sh"
 grep -q '/tmp/sharness-trash' "${src}/t/sharness.sh"
 
