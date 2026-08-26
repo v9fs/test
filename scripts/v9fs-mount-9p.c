@@ -35,15 +35,24 @@ main(int argc, char **argv)
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "-n"))
 			continue;
-		if (!strcmp(argv[i], "-t")) {
-			if (++i >= argc || strcmp(argv[i], "9p") != 0)
+		if (!strcmp(argv[i], "-t") || !strncmp(argv[i], "-t", 2)) {
+			const char *fstype = argv[i][2] ? argv[i] + 2 : NULL;
+			if (!fstype) {
+				if (++i >= argc)
+					usage(argv[0]);
+				fstype = argv[i];
+			}
+			if (strcmp(fstype, "9p") != 0)
 				usage(argv[0]);
 			continue;
 		}
-		if (!strcmp(argv[i], "-o")) {
-			if (++i >= argc)
-				usage(argv[0]);
-			opts = argv[i];
+		if (!strcmp(argv[i], "-o") || !strncmp(argv[i], "-o", 2)) {
+			opts = argv[i][2] ? argv[i] + 2 : NULL;
+			if (!opts) {
+				if (++i >= argc)
+					usage(argv[0]);
+				opts = argv[i];
+			}
 			continue;
 		}
 		if (!source)

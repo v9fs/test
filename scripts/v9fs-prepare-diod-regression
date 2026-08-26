@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v4}"
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v5}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
