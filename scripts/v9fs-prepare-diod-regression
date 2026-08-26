@@ -8,6 +8,8 @@ src="${DIOD_SRC:-/workspaces/tmp/diod-src}"
 build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
+# Bump when harness patches change so CI does not reuse a stale content-addressed build.
+patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v12}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -35,11 +37,14 @@ if ! grep -q 'v9fs-guest' /etc/hosts 2>/dev/null; then
 fi
 cat >/etc/sudoers.d/v9fs-nopasswd <<'EOF'
 Defaults !fqdn
+Defaults !requiretty
 v9fs ALL=(ALL) NOPASSWD:ALL
 EOF
 chmod 440 /etc/sudoers.d/v9fs-nopasswd
-# Validate passwordless sudo before the guest boots.
+# Validate passwordless sudo before the guest boots (no tty, like diodrun setsid).
 sudo -u v9fs sudo -n true
+# Avoid util-linux "Too many levels of symbolic links" on broken /etc/mtab.
+ln -sfn /proc/self/mounts /etc/mtab
 
 # Clone/update source.
 if [ ! -d "${src}/.git" ]; then
@@ -49,29 +54,171 @@ fi
 git -C "${src}" fetch --depth 1 origin "${ref}" || true
 git -C "${src}" checkout -q "${ref}" || true
 
-# Start diod as root then drop to --runas (production path). Non-root
-# `unixsocket` left us with flaky mounts (ECONNREFUSED / cascading FAILs)
-# even though waitsock passed; `unixsocketroot` matches diod's own root→runas flow.
+# Reset patched files so re-prepare is idempotent.
+git -C "${src}" checkout -q -- \
+  t/t0010-v9fs-runasuser.t \
+  t/t0011-v9fs-allsquash.t \
+  t/t0012-v9fs-multiuser.t \
+  t/t0013-v9fs-acl.t \
+  t/t0020-dbench.t \
+  t/t0021-postmark.t \
+  t/sharness.d/20-diod.sh \
+  t/sharness.sh \
+  || true
+
+# Start diod as root then drop to --runas (production path).
 find "${src}/t" -type f -name 't*.t' -print0 \
   | xargs -0 sed -i 's/test_under_diod unixsocket /test_under_diod unixsocketroot /g'
+
+python3 - <<'PY' "${src}"
+import pathlib, sys
+src = pathlib.Path(sys.argv[1])
+
+old_cmds = (
+    'umountcmd="$SUDO umount -l"\n'
+    'mountcmd="$SUDO mount -n -t 9p"\n'
+    'mountopts="trans=unix,uname=$(id -un)"\n'
+)
+new_cmds = (
+    'if test "$(id -u)" = "0"; then\n'
+    '\tumountcmd="$SUDO umount -l"\n'
+    '\tmountcmd="$SUDO mount -n -t 9p"\n'
+    'else\n'
+    '\t# util-linux post-mount check as euid 0 fails ACCESS_SINGLE when access=<uid>.\n'
+    '\tumountcmd="v9fs_access_umount -l"\n'
+    '\tmountcmd="v9fs_access_mount -n -t 9p"\n'
+    'fi\n'
+    'mountopts="trans=unix,version=9p2000.L,uname=$(id -un)"\n'
+)
+
+patched = 0
+for path in sorted((src / "t").glob("t*.t")):
+    text = path.read_text()
+    orig = text
+    if old_cmds in text:
+        text = text.replace(old_cmds, new_cmds, 1)
+    if path.name == "t0010-v9fs-runasuser.t":
+        old_under = (
+            "exportdir=$SHARNESS_TRASH_DIRECTORY/exp\n"
+            "test_under_diod unixsocketroot \\\n"
+            "    --config-file=/dev/null \\\n"
+            "    --debug=0x1 \\\n"
+            "    --runas=$(id -u) \\\n"
+            "    --no-auth \\\n"
+            "    --export=$exportdir\n"
+        )
+        new_under = (
+            "exportdir=$SHARNESS_TRASH_DIRECTORY/exp\n"
+            'mkdir -p "$exportdir"\n'
+            "test_under_diod unixsocketroot \\\n"
+            "    --config-file=/dev/null \\\n"
+            "    --debug=0x1 \\\n"
+            "    --runas=$(id -u) \\\n"
+            "    --no-auth \\\n"
+            "    --export=$exportdir\n"
+        )
+        if old_under in text:
+            text = text.replace(old_under, new_under, 1)
+    if text != orig:
+        path.write_text(text)
+        patched += 1
+        print(f"patched {path}")
+if patched < 1:
+    raise SystemExit("no t*.t files patched for mountcmd")
+
+helper = src / "t" / "sharness.d" / "20-diod.sh"
+h = helper.read_text()
+mount_helpers = """
+V9FS_MOUNT_9P=/workspaces/tmp/v9fs-mount-9p
+
+# Minimal mount(2) helper avoids util-linux post-check as root under ACCESS_SINGLE.
+v9fs_access_mount() {
+	if test "$(id -u)" = "0"; then
+		"$V9FS_MOUNT_9P" "$@"
+	else
+		$SUDO "$V9FS_MOUNT_9P" "$@"
+	fi
+}
+
+v9fs_access_umount() {
+	if test "$(id -u)" = "0"; then
+		umount "$@"
+	else
+		$SUDO umount "$@"
+	fi
+}
+
+"""
+if "v9fs_access_mount()" not in h:
+    anchor = "# Usage: waitsock sockpath [retries]\nwaitsock() {"
+    if anchor not in h:
+        raise SystemExit("20-diod.sh: waitsock anchor not found")
+    h = h.replace(anchor, mount_helpers + anchor, 1)
+
+old_cleanup = (
+    '\tif test -n "$TEST_UNDER_DIOD_ACTIVE"; then\n'
+    '\t\ttest "$debug" = "t" || cleanup rm -f "${SHARNESS_TEST_DIRECTORY:-..}/$log_file"\n'
+    '\t\treturn\n'
+    '\tfi\n'
+)
+new_cleanup = (
+    '\tif test -n "$TEST_UNDER_DIOD_ACTIVE"; then\n'
+    '\t\t# Keep $log_file for harness triage (was removed unless --debug).\n'
+    '\t\treturn\n'
+    '\tfi\n'
+)
+if old_cleanup in h:
+    h = h.replace(old_cleanup, new_cleanup, 1)
+elif "Keep $log_file for harness triage" not in h:
+    raise SystemExit("20-diod.sh: cleanup block not found")
+helper.write_text(h)
+print(f"patched {helper}")
+
+sharness = src / "t" / "sharness.sh"
+s = sharness.read_text()
+old_trash = 'SHARNESS_TRASH_DIRECTORY="trash-directory.$SHARNESS_TEST_NAME"'
+new_trash = 'SHARNESS_TRASH_DIRECTORY="/tmp/sharness-trash/$SHARNESS_TEST_NAME"'
+if old_trash not in s:
+    raise SystemExit("sharness.sh: trash directory assignment not found")
+sharness.write_text(s.replace(old_trash, new_trash, 1))
+print(f"patched {sharness}")
+PY
+
+n_root=$(grep -rh 'test_under_diod unixsocketroot' "${src}/t" --include='*.t' 2>/dev/null | wc -l | tr -d ' ' || true)
+echo "diod harness patch: unixsocketroot=${n_root} stamp=${patch_stamp}"
+if grep -rhq 'test_under_diod unixsocket ' "${src}/t" --include='*.t' 2>/dev/null; then
+  echo "ERROR: remaining test_under_diod unixsocket references after patch" >&2
+  grep -rn 'test_under_diod unixsocket ' "${src}/t" --include='*.t' >&2 || true
+  exit 1
+fi
+grep -q 'v9fs_access_mount' "${src}/t/t0010-v9fs-runasuser.t"
+grep -q 'v9fs_access_mount' "${src}/t/t0020-dbench.t"
+grep -q 'V9FS_MOUNT_9P' "${src}/t/sharness.d/20-diod.sh"
+grep -q '/tmp/sharness-trash' "${src}/t/sharness.sh"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+gcc -O2 -o /workspaces/tmp/v9fs-mount-9p "${script_dir}/v9fs-mount-9p.c"
+chmod 755 /workspaces/tmp/v9fs-mount-9p
+if ! findmnt -t tmpfs /tmp >/dev/null 2>&1; then
+  mount -t tmpfs -o mode=1777,size=512M tmpfs /tmp
+fi
+mkdir -p /tmp/sharness-trash
+chmod 1777 /tmp /tmp/sharness-trash
 
 # Autotools bootstrap.
 (cd "${src}" && ./autogen.sh)
 
-# Build in a content-addressed directory (avoids cleanup issues with mixed uid mappings).
-build_real="/workspaces/tmp/diod-build-$(git -C "${src}" rev-parse --short HEAD)"
+build_real="/workspaces/tmp/diod-build-$(git -C "${src}" rev-parse --short HEAD)-${patch_stamp}"
+rm -rf "${build_real}"
 mkdir -p "${build_real}"
 
 (cd "${build_real}" && "${src}/configure")
 (cd "${build_real}" && make -j"$(nproc)")
 
-# Record the build directory for the guest (symlinks can be awkward across 9p+bind mounts).
 echo "${build_real}" > /workspaces/tmp/diod-build.LATEST
+ln -sfn "${build_real}" "${build_link}" 2>/dev/null || true
 
-# The guest writes test logs into the build tree; ensure it's writable over 9p
-# regardless of uid mapping.
 chmod -R a+rwX "${src}" "${build_real}" || true
 
 echo "Prepared diod build at ${build_real}"
 ls -la "${build_real}/t" | head -n 50 || true
-

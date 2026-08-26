@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Per-test wrapper: line-buffered timeout around sharness, then drop leftover
+# unix 9p mounts / diod so test_diodrun --socktest cannot wedge make check.
+set -u
+secs="${1:-300}"
+shift
+set +e
+# stdbuf so breadcrumbs appear before a subsequent D-state hang.
+stdbuf -oL -eL timeout --foreground -k 10 "$secs" stdbuf -oL -eL "$@"
+rc=$?
+set -e
+if [ -r /proc/self/mountinfo ]; then
+  while read -r _ _ _ _ mnt _; do
+    case "$mnt" in
+      /tmp/sharness-trash/*)
+        umount -l "$mnt" 2>/dev/null || true
+        ;;
+    esac
+  done < /proc/self/mountinfo
+fi
+pkill -x diod 2>/dev/null || true
+sleep 1
+exit "$rc"

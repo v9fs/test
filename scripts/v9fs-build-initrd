@@ -42,6 +42,11 @@ echo "init: bootver=${bootver}"
 
 if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9; then
   echo "init: mounted hostshare at /mnt/9"
+  # Ensure the Debian chroot has real /proc /sys /dev (image dirs alone are not enough).
+  mkdir -p /mnt/9/proc /mnt/9/sys /mnt/9/dev
+  mount -t proc proc /mnt/9/proc 2>/dev/null || mount --bind /proc /mnt/9/proc || true
+  mount -t sysfs sysfs /mnt/9/sys 2>/dev/null || mount --bind /sys /mnt/9/sys || true
+  mount --bind /dev /mnt/9/dev 2>/dev/null || true
   if [ -x /mnt/9/usr/sbin/chroot ] && [ -x /mnt/9/usr/bin/bash ]; then
     echo "init: chroot -> /mnt/9, running container bash+ls"
     rc=0
@@ -92,9 +97,13 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           # Run as non-root so --runas=$(id -u) / access=$(id -u) match diod intent.
           # Per-test timeout (LOG_COMPILER) so a hung script FAILs that test instead of
           # stalling the whole suite under a single outer timeout.
+          # Install per-test timeout wrapper into /tmp (writable, not on 9p).
+          cp -f /home/v9fs-test/test/scripts/v9fs-diod-test-timeout /tmp/v9fs-diod-test-timeout
+          chmod 755 /tmp/v9fs-diod-test-timeout
+
           set +e
-          sudo -u v9fs -H make -C t check \
-            LOG_COMPILER=timeout \
+          timeout 1500 sudo -u v9fs -H stdbuf -oL -eL make -C t check \
+            LOG_COMPILER=/tmp/v9fs-diod-test-timeout \
             AM_LOG_FLAGS=300 \
             TESTS="\
             t0010-v9fs-runasuser.t \
@@ -106,6 +115,16 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           " 2>&1 | tee "$make_out"
           make_rc="${PIPESTATUS[0]}"
           set -e
+          if [ -r /proc/self/mountinfo ]; then
+            while read -r _ _ _ _ mnt _; do
+              case "$mnt" in
+                /tmp/*) umount -l "$mnt" 2>/dev/null || true ;;
+              esac
+            done < /proc/self/mountinfo
+          fi
+          pkill -x diod 2>/dev/null || true
+          pkill -x test_diodrun 2>/dev/null || true
+          sleep 1
 
           # Prefer automake combined log; synthesize from tee if missing.
           suite="$build/t/test-suite.log"
@@ -116,6 +135,14 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           fi
           cp -f "$suite" /home/v9fs-test/test/logs/diod-test-suite.log 2>/dev/null || true
 
+          # Scoop t0010 mount instrumentation + diod server logs for CI artifacts.
+          cp -f /home/v9fs-test/test/logs/diod-t0010-mount-debug.txt \
+            /home/v9fs-test/test/logs/ 2>/dev/null || true
+          find "$build/t" -maxdepth 3 \( -name '*.diod.log' -o -name 'diod-t0010-mount-debug.txt' \) \
+            -exec cp -f {} /home/v9fs-test/test/logs/ \; 2>/dev/null || true
+          cp -f /tmp/diod-t0010-mount.stderr /tmp/diod-t0010.diod.log \
+            /home/v9fs-test/test/logs/ 2>/dev/null || true
+
           # Evaluate failures against the harness XFAIL baseline so we can track them
           # without failing the overall CI stage unless a regression appears.
           eval_out="/home/v9fs-test/test/logs/diod-xfail"
@@ -123,6 +150,12 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
           /home/v9fs-test/test/scripts/v9fs-diod-regression-eval "$suite" "$xfail" "$eval_out"
           eval_rc="$?"
 
+          # timeout(1) exits 124; signals often yield 143/137. Never treat an
+          # aborted suite with zero FAIL lines as an XFAIL pass.
+          if [ "$make_rc" -eq 124 ] || [ "$make_rc" -ge 128 ]; then
+            echo "diod-regression: make aborted rc=$make_rc (timeout/signal)"
+            exit "$make_rc"
+          fi
           if [ "$eval_rc" = "0" ]; then
             exit 0
           fi
