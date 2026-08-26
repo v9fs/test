@@ -1,6 +1,6 @@
 ## Unreleased
 
-- Docs: README/TODO/AGENTS match live workflows (`ci.yml`, publish, sync); drop stale `demand.yml`/`nightly.yml` snapshot under `old/rework-take-1/` (#3).
+- Docs: README/TODO/AGENTS match live workflows (`ci.yml`, publish, sync); drop stale `demand.yml`/`nightly.yml` snapshot under `old/rework-take-1/` (#3). Header comment on `linux-kernel-publish.yml` records the test-repo-only trigger contract.
 - Ignore local `.env` (`GH_TOKEN` for host-side `gh` / `act`); do not pass it into the guest.
 - Instrument diod `t0010` first `access=<uid>` mount (stderr/dmesg/diod log), pin `version=9p2000.L`, pre-create export, `Defaults !requiretty`, and force a fresh patched build stamp so CI can triage residual non-root mount failures.
 - Fix non-root `ACCESS_SINGLE` mounts across diod sharness: `scripts/v9fs-mount-9p` + trash on `/tmp`; t0010 runasuser now expected PASS including root-negatives.
