@@ -116,8 +116,9 @@ class Watcher:
         # Give the threads a moment to enter their wait before the append.
         time.sleep(0.15)
 
-    def wait(self) -> None:
-        deadline = _monotonic() + self.timeout
+    def wait(self, deadline: Optional[float] = None) -> None:
+        if deadline is None:
+            deadline = _monotonic() + self.timeout
         while _monotonic() < deadline and not self._all_live_saw():
             time.sleep(0.05)
         self.stop.set()
@@ -346,8 +347,11 @@ def classify(cache: str, methods: Dict[str, Any]) -> Dict[str, Any]:
         if live_ok:
             return {"verdict": "XPASS", "required": False, "note": note}
         return {"verdict": "XFAIL", "required": False, "note": note}
-    # Coherent caches: live follow is the #3 contract.
-    if live_ok and reopen_ok:
+    # Coherent caches: issue #3 is GNU tail -f vs a server append. inotify /
+    # fstat / stat remain in the matrix so we can score fix options; they do
+    # not gate the verdict (a "stop advertising inotify" kernel change should
+    # be allowed to go green once tail polls).
+    if methods["tail"]["saw"] and reopen_ok:
         return {"verdict": "PASS", "required": True, "note": note}
     return {"verdict": "FAIL", "required": True, "note": note}
 
@@ -457,6 +461,13 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         cl = classify("none", only_reopen)
         if cl["verdict"] != "FAIL" or "reopen" not in cl["note"]:
             log(f"ERROR: diagnose(reopen-only) unexpected {cl}")
+            return 2
+        tail_ok = _blank()
+        tail_ok["tail"]["saw"] = True
+        tail_ok["reopen"]["saw"] = True
+        cl = classify("none", tail_ok)
+        if cl["verdict"] != "PASS":
+            log(f"ERROR: classify(tail+reopen) unexpected {cl}")
             return 2
         inotify_gap = _blank()
         for m in ("fstat_size", "fd_read", "stat_size", "tail", "reopen"):
@@ -609,8 +620,9 @@ def _guest_qemu_virtio(logdir: str, magic: str, timeout: float) -> List[Dict[str
     write_atomic(ready, f"ready {_now()} caches={','.join(watchers)}\n")
     log(f"wrote {ready}; waiting for host append")
 
+    deadline = _monotonic() + timeout
     for w in watchers.values():
-        w.wait()
+        w.wait(deadline=deadline)
 
     cases = []
     for cache, w in watchers.items():

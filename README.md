@@ -51,7 +51,7 @@ make tail-follow-selftest
 make docker-tail-follow
 ```
 
-The report (`logs/tail-follow.report.json`) is a cache × method matrix (`inotify`, `fstat_size`, `fd_read`, `stat_size`, `tail`, `reopen`) so a kernel fix can be scored against the options in the issue (drop inotify so tail polls, getattr on open files, TTL revalidate, …). Each case includes a `note` that maps the pattern onto those options. `cache=loose` live-follow is XFAIL; `cache=none`/`mmap`/`readahead` live-follow is required and currently expected to FAIL on mainline (that is the #3 repro). Do not add this suite to `.github/workflows/ci.yml` until those required cells go green.
+The report (`logs/tail-follow.report.json`) is a cache × method matrix (`inotify`, `fstat_size`, `fd_read`, `stat_size`, `tail`, `reopen`) so a kernel fix can be scored against the options in the issue (drop inotify so tail polls, getattr on open files, TTL revalidate, …). Each case includes a `note` that maps the pattern onto those options. The **verdict** for coherent caches (`none` / `mmap` / `readahead`) is GNU `tail -f` (plus reopen); inotify/fstat/stat are diagnostic and do not gate PASS. `cache=loose` live-follow is XFAIL. On current mainline, qemu-virtio `tail -f` is expected to FAIL (the #3 repro); diod may already `tail -f` via poll even when inotify is silent. Do not add this suite to `.github/workflows/ci.yml` until the required virtio cells go green.
 
 `make docker-tail-follow` boots extra virtio-9p channels (`tf-none`, `tf-readahead`, `tf-mmap`, `tf-loose`) so each cache mode is a distinct mount — `hostshare` is already `/` in the guest and cannot be remounted. `DOCKER=podman make docker-tail-follow` works when the docker socket is unavailable.
 
