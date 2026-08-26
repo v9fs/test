@@ -1,7 +1,7 @@
 ## Unreleased
 
 - Instrument diod `t0010` first `access=<uid>` mount (stderr/dmesg/diod log), pin `version=9p2000.L`, pre-create export, `Defaults !requiretty`, and force a fresh patched build stamp so CI can triage residual non-root mount failures.
-- Fix non-root `ACCESS_SINGLE` mounts: compile `scripts/v9fs-mount-9p` (direct `mount(2)`, no util-linux post-check) for sharness `v9fs_access_mount`; keep sharness trash on `/tmp` to avoid nested-9p deadlock after mount.
+- Fix non-root `ACCESS_SINGLE` mounts across diod sharness: `scripts/v9fs-mount-9p` + trash on `/tmp`; t0010 runasuser now expected PASS including root-negatives.
 - Run diod sharness as non-root user `v9fs` (so ACCESS_SINGLE / `--runas` negatives work); per-test `timeout` via automake `LOG_COMPILER` instead of one outer suite timeout.
 - Refresh diod XFAIL baseline for tip `v7.2` (access/umount residuals); tee `make check` so timeout still yields a parseable suite log for XFAIL eval.
 - Build-in `NET_9P_FD` (and `UNIX`) on published Images so diod-regression `trans=unix` mounts work; arm64 defconfig left FD as `=m` while virtio was forced `=y`.
