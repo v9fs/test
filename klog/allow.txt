@@ -1,0 +1,5 @@
+# Allowlisted kernel log lines (extended regex, matched against the log line).
+# Keep this empty unless a known firmware/QEMU/guest-init WARN is not a v9fs bug.
+#
+# Example:
+# WARNING: CPU: .* at drivers/firmware/efi/libstub/

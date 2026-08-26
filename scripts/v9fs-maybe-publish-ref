@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Trigger linux-kernel-publish for a v9fs/linux ref when the SHA is new.
+# Usage: v9fs-maybe-publish-ref <linux_ref> <release_tag>
+set -euo pipefail
+
+linux_ref="${1:-}"
+release_tag="${2:-}"
+if [ -z "$linux_ref" ] || [ -z "$release_tag" ]; then
+  echo "usage: $0 <linux_ref> <release_tag>" >&2
+  exit 2
+fi
+
+repo="${GITHUB_REPOSITORY:-v9fs/test}"
+
+sha="$(gh api "repos/v9fs/linux/commits/${linux_ref}" --jq .sha)"
+echo "v9fs/linux ${linux_ref} @ ${sha}"
+
+notes=""
+if gh release view "$release_tag" --repo "$repo" >/dev/null 2>&1; then
+  notes="$(gh release view "$release_tag" --repo "$repo" --json body --jq .body || true)"
+fi
+
+if [ -n "$notes" ] && grep -F -q "$sha" <<<"$notes"; then
+  echo "skip publish: $release_tag already has sha $sha"
+  exit 0
+fi
+
+echo "publish: linux_ref=${linux_ref} release_tag=${release_tag}"
+gh workflow run "Publish Linux kernel (arm64 Image)" \
+  --repo "$repo" \
+  -f linux_repository=v9fs/linux \
+  -f linux_ref="${linux_ref}" \
+  -f release_tag="${release_tag}" \
+  -f also_latest=false

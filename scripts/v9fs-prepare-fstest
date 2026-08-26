@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Build pjdfstest into /workspaces/tmp/testbin/pjdfstest for the guest-direct fstest suite.
+set -euo pipefail
+
+root="${TESTBIN_ROOT:-/workspaces/tmp/testbin}"
+dst="${root}/pjdfstest"
+mkdir -p "${root}"
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+  autoconf automake gcc make perl libtest-harness-perl git ca-certificates
+
+if [ ! -x "${dst}/pjdfstest" ]; then
+  rm -rf "${dst}"
+  git clone --depth=1 https://github.com/pjd/pjdfstest.git "${dst}"
+  (
+    cd "${dst}"
+    autoreconf -ifs
+    ./configure
+    make pjdfstest
+  )
+fi
+
+chmod -R a+rX "${dst}" || true
+echo "Prepared pjdfstest under ${dst}"
+ls -la "${dst}/pjdfstest" "${dst}/tests" | head

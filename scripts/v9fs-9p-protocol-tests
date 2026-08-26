@@ -11,6 +11,11 @@ fi
 
 echo "9p-proto: server=${server} dialect=${dialect}"
 
+legacy=0
+if [ "$dialect" = "9p2000" ]; then
+  legacy=1
+fi
+
 # Kernel config probe (preferred source of truth when available).
 if [ -r /proc/config.gz ]; then
   echo "== kernel config (from /proc/config.gz) =="
@@ -118,12 +123,20 @@ assert_eq "$(cat "$exp/tcase/old")" "new"
 test ! -e "$exp/tcase/new"
 
 echo "== symlink + readlink =="
-ln -s "dir2/a" "$cli/tcase/syma"
-assert_eq "$(readlink "$exp/tcase/syma")" "dir2/a"
+if [ "$legacy" = "1" ]; then
+  echo "SKIP: symlink not required on 9p2000"
+else
+  ln -s "dir2/a" "$cli/tcase/syma"
+  assert_eq "$(readlink "$exp/tcase/syma")" "dir2/a"
+fi
 
 echo "== hardlink =="
-ln "$cli/tcase/dir2/a" "$cli/tcase/a_hard"
-assert_eq "$(stat -c %h "$exp/tcase/dir2/a")" "$(stat -c %h "$exp/tcase/a_hard")"
+if [ "$legacy" = "1" ]; then
+  echo "SKIP: hardlink not required on 9p2000"
+else
+  ln "$cli/tcase/dir2/a" "$cli/tcase/a_hard"
+  assert_eq "$(stat -c %h "$exp/tcase/dir2/a")" "$(stat -c %h "$exp/tcase/a_hard")"
+fi
 
 echo "== truncate and sparse writes =="
 # Write a single byte at a large offset. This should expand apparent size without
@@ -136,14 +149,18 @@ test "$sz_cli" -ge $((1024*1024 + 1)) || fail "expected sparse size >= 1MiB+1 on
 assert_eq "$(stat -c %s "$exp/tcase/sparse")" "0"
 
 echo "== unlink while open =="
-echo hold >"$cli/tcase/open_unlink"
-(
-  exec 3<"$cli/tcase/open_unlink"
-  rm -f "$cli/tcase/open_unlink"
-  cat <&3 >/dev/null
-  exec 3<&-
-)
-test ! -e "$exp/tcase/open_unlink"
+if [ "$legacy" = "1" ]; then
+  echo "SKIP: unlink-while-open not required on 9p2000"
+else
+  echo hold >"$cli/tcase/open_unlink"
+  (
+    exec 3<"$cli/tcase/open_unlink"
+    rm -f "$cli/tcase/open_unlink"
+    cat <&3 >/dev/null
+    exec 3<&-
+  )
+  test ! -e "$exp/tcase/open_unlink"
+fi
 
 echo "== long filename and deep pathwalk =="
 longname="$(printf 'a%.0s' $(seq 1 200))"

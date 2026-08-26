@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Best-effort metrics from a completed guest run. Never fails the suite.
+# Writes logs/<ts>/metrics.json (and logs/metrics.json copy).
+set -euo pipefail
+
+ts="${1:-${TIMESTAMP:-}}"
+if [ -z "$ts" ]; then
+  echo "usage: $0 <timestamp>" >&2
+  exit 0
+fi
+
+dir="logs/${ts}"
+mkdir -p "$dir"
+
+python3 - "$dir" <<'PY' || true
+import json, os, pathlib, re, sys
+
+d = pathlib.Path(sys.argv[1])
+out = {
+    "mem_available_kb": None,
+    "dbench_throughput_mbs": None,
+    "postmark_transactions": None,
+    "klog_hits": 0,
+}
+
+mem = d / "meminfo.txt"
+if mem.is_file():
+    for line in mem.read_text(errors="replace").splitlines():
+        if line.startswith("MemAvailable:"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                out["mem_available_kb"] = int(parts[1])
+            break
+
+blob = ""
+for name in ("qemu.log", "guest.log", "dbench.log"):
+    p = d / name
+    if p.is_file():
+        blob += p.read_text(errors="replace") + "\n"
+
+m = re.search(r"Throughput\s+([0-9.]+)\s*MB", blob, re.I)
+if m:
+    try:
+        out["dbench_throughput_mbs"] = float(m.group(1))
+    except ValueError:
+        pass
+
+m = re.search(r"Transactions:\s*([0-9]+)", blob, re.I)
+if m:
+    out["postmark_transactions"] = int(m.group(1))
+
+klog = d / "klog-hits.txt"
+if klog.is_file():
+    out["klog_hits"] = sum(1 for line in klog.read_text(errors="replace").splitlines() if line.strip())
+
+path = d / "metrics.json"
+path.write_text(json.dumps(out, indent=2) + "\n")
+print(f"wrote {path} {out}")
+PY
+
+if [ -f "${dir}/metrics.json" ]; then
+  cp -f "${dir}/metrics.json" logs/metrics.json 2>/dev/null || true
+fi

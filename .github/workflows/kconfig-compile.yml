@@ -1,0 +1,93 @@
+name: Kconfig compile sweep
+
+# Compile-only 9p kconfig flavors (#8). No QEMU. Manual until flavors stay green;
+# then we can add a weekly cron.
+on:
+  workflow_dispatch:
+    inputs:
+      linux_repository:
+        description: "Kernel GitHub repository"
+        required: true
+        default: "v9fs/linux"
+        type: string
+      linux_ref:
+        description: "Git ref to compile"
+        required: true
+        default: "upstream"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - 9p-builtin
+          - 9p-modules
+          - 9p-noacl
+    env:
+      V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:latest
+      FLAVOR: ${{ matrix.flavor }}
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.linux_repository }}
+          ref: ${{ inputs.linux_ref }}
+          path: linux
+
+      - name: Compile ${{ matrix.flavor }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/tmp"
+          docker run --rm --privileged \
+            --user 0:0 \
+            -e FLAVOR="${FLAVOR}" \
+            -v "$GITHUB_WORKSPACE:/home/v9fs-test/test" \
+            -v "$GITHUB_WORKSPACE/linux:/workspaces/linux" \
+            -v "$GITHUB_WORKSPACE/tmp:/workspaces/tmp" \
+            -w /home/v9fs-test/test \
+            "${V9FS_DOCKER_IMAGE}" \
+            bash -lc '
+              set -euo pipefail
+              out=/workspaces/linux/.build-${FLAVOR}
+              rm -rf "$out"
+              mkdir -p "$out"
+              make -C /workspaces/linux O="$out" defconfig
+              cfg=/workspaces/linux/scripts/config
+              test -x "$cfg"
+              case "${FLAVOR}" in
+                9p-builtin)
+                  "$cfg" --file "$out/.config" \
+                    -e NET_9P -e NET_9P_FD -e NET_9P_VIRTIO -e 9P_FS \
+                    -e 9P_FS_POSIX_ACL -e 9P_FS_SECURITY -e 9P_FS_XATTR \
+                    -e FS_POSIX_ACL -e TMPFS_POSIX_ACL \
+                    -e UNIX -e VIRTIO_PCI -e PCI
+                  ;;
+                9p-modules)
+                  "$cfg" --file "$out/.config" \
+                    -m NET_9P -m NET_9P_FD -m NET_9P_VIRTIO -m 9P_FS \
+                    -e 9P_FS_POSIX_ACL -e 9P_FS_SECURITY -e 9P_FS_XATTR \
+                    -e FS_POSIX_ACL -e UNIX -e VIRTIO_PCI -e PCI
+                  ;;
+                9p-noacl)
+                  "$cfg" --file "$out/.config" \
+                    -e NET_9P -e NET_9P_FD -e NET_9P_VIRTIO -e 9P_FS \
+                    -d 9P_FS_POSIX_ACL -e 9P_FS_XATTR \
+                    -e UNIX -e VIRTIO_PCI -e PCI
+                  ;;
+                *)
+                  echo "unknown flavor ${FLAVOR}" >&2
+                  exit 2
+                  ;;
+              esac
+              make -C /workspaces/linux O="$out" olddefconfig
+              make -C /workspaces/linux O="$out" Image -j"$(nproc)"
+              echo "OK: ${FLAVOR} Image built"
+            '

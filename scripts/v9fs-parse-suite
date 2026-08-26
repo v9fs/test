@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Parse a v9fs-run-tests suite name into server/dialect/cache/kind.
+# Prints shell assignments: kind=… server=… dialect=… cache=…
+set -euo pipefail
+
+tests="${1:-}"
+if [ -z "$tests" ]; then
+  echo "usage: $0 <suite>" >&2
+  exit 2
+fi
+
+kind="other"
+server=""
+dialect=""
+cache="loose"
+
+case "$tests" in
+  smoke|fsx|postmark|dbench|diod-regression|fstest)
+    kind="$tests"
+    ;;
+  qemu-*|diod-*)
+    kind="protocol"
+    server="${tests%%-*}"
+    rest="${tests#*-}"
+    case "$rest" in
+      *-none) dialect="${rest%-none}"; cache="none" ;;
+      *-mmap) dialect="${rest%-mmap}"; cache="mmap" ;;
+      *-fscache) dialect="${rest%-fscache}"; cache="fscache" ;;
+      *) dialect="$rest" ;;
+    esac
+    ;;
+  *)
+    echo "ERROR: unknown suite=${tests}" >&2
+    exit 2
+    ;;
+esac
+
+printf 'kind=%q\n' "$kind"
+printf 'server=%q\n' "$server"
+printf 'dialect=%q\n' "$dialect"
+printf 'cache=%q\n' "$cache"

@@ -16,8 +16,10 @@ export PIDFILE="/home/v9fs-test/qemu.pid"
 export FSDEV_PATH="/"
 export KERNELBUILD="${KERNELBUILD:-/workspaces/kernel/.build}"
 
-# Prepare benchmark binaries when requested.
-case "${tests}" in
+eval "$(./scripts/v9fs-parse-suite "${tests}")"
+
+# Prepare extra binaries when requested.
+case "${kind}" in
   smoke) ;;
   fsx|postmark|dbench)
     ./scripts/v9fs-prepare-benchmarks
@@ -25,19 +27,28 @@ case "${tests}" in
   diod-regression)
     ./scripts/v9fs-prepare-diod-regression
     ;;
-  qemu-9p2000.L)
+  fstest)
+    ./scripts/v9fs-prepare-fstest
     ;;
-  diod-9p2000.L)
-    ./scripts/v9fs-prepare-diod-server
+  protocol)
+    if [ "${server}" = "diod" ]; then
+      ./scripts/v9fs-prepare-diod-server
+    fi
     ;;
   *)
-    echo "ERROR: unknown tests=${tests} (expected smoke|fsx|postmark|dbench|diod-regression|qemu-9p2000.L|diod-9p2000.L)"
+    echo "ERROR: unknown tests=${tests}"
     exit 2
     ;;
 esac
 
 # Tell v9fs-build-initrd which test to bake in.
 export V9FS_TESTS="${tests}"
+export V9FS_BOOTVER="${dialect:-9p2000.L}"
+export V9FS_CACHE="${cache:-loose}"
+if [ "${kind}" != "protocol" ]; then
+  export V9FS_BOOTVER="9p2000.L"
+  export V9FS_CACHE="loose"
+fi
 
 # Patch the image-provided initrd so u-root runs our `/bin/uinit`.
 export INITRD="${INITRD:-/opt/v9fs/initrd.patched.cpio}"
@@ -56,11 +67,12 @@ export QEMU_STREAM_LOG=0
 # The guest is expected to power off when done.
 wait_secs="${WAIT_SECS:-}"
 if [ -z "${wait_secs}" ]; then
-  case "${tests}" in
+  case "${kind}" in
     smoke) wait_secs=180 ;;
     fsx|postmark|dbench) wait_secs=900 ;;
     diod-regression) wait_secs=2400 ;;
-    qemu-9p2000.L|diod-9p2000.L) wait_secs=600 ;;
+    fstest) wait_secs=1200 ;;
+    protocol) wait_secs=600 ;;
     *) wait_secs=300 ;;
   esac
 fi
@@ -98,6 +110,12 @@ fi
 if [ -f "${guest_log_src}" ]; then
   cp -f "${guest_log_src}" "logs/${TIMESTAMP}/guest.log" 2>/dev/null || true
 fi
+if [ -f "logs/dmesg.log" ]; then
+  cp -f "logs/dmesg.log" "logs/${TIMESTAMP}/dmesg.log" 2>/dev/null || true
+fi
+if [ -f "logs/meminfo.txt" ]; then
+  cp -f "logs/meminfo.txt" "logs/${TIMESTAMP}/meminfo.txt" 2>/dev/null || true
+fi
 
 if [ ! -f "${guest_rc_file}" ]; then
   echo "WARNING: missing ${guest_rc_file} (and ${guest_rc_src}); treating as failure"
@@ -107,8 +125,16 @@ fi
 guest_rc="$(cat "${guest_rc_file}" 2>/dev/null || echo 1)"
 if [ "${guest_rc}" != "0" ]; then
   echo "Guest reported failures (rc=${guest_rc})"
+  ./scripts/v9fs-collect-metrics "${TIMESTAMP}" || true
+  ./scripts/v9fs-scan-klog --allow klog/allow.txt \
+    "${QEMULOG}" "logs/${TIMESTAMP}/dmesg.log" "logs/dmesg.log" || true
   exit "${guest_rc}"
 fi
 
 echo "OK: guest rc=0 (logs at logs/${TIMESTAMP}/)"
 
+./scripts/v9fs-collect-metrics "${TIMESTAMP}" || true
+
+# Kernel BUG/WARN with a green userspace rc is still a failure (#4).
+./scripts/v9fs-scan-klog --allow klog/allow.txt \
+  "${QEMULOG}" "logs/${TIMESTAMP}/dmesg.log" "logs/dmesg.log"

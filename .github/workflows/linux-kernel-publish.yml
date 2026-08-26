@@ -100,10 +100,11 @@ jobs:
             echo "Published Image -> release $tag"
           }
 
-          publish_one "$TAG" "Automated arm64 kernel Image from ${LINUX_REF}."
+          LINUX_SHA="$(git -C linux rev-parse HEAD)"
+          publish_one "$TAG" "Automated arm64 kernel Image from ${LINUX_REF} (sha ${LINUX_SHA})."
 
           # Floating alias for harness default / wiki “current tip” comparisons.
           if [ "${ALSO_LATEST}" = "true" ]; then
-            publish_one "kernel-latest" "Floating latest Image (currently ${LINUX_REF} / ${TAG})."
+            publish_one "kernel-latest" "Floating latest Image (currently ${LINUX_REF} / ${TAG}) sha ${LINUX_SHA}."
           fi
 

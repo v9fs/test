@@ -36,11 +36,12 @@ mkdir -p /run /tmp /mnt/9
 tests="__V9FS_TESTS__"
 echo "init: tests=${tests}"
 
-# Default dialect for QEMU virtio-9p hostshare mounts.
-bootver="9p2000.L"
-echo "init: bootver=${bootver}"
+# Default dialect/cache for QEMU virtio-9p hostshare mounts (baked by v9fs-run-tests).
+bootver="__V9FS_BOOTVER__"
+cache="__V9FS_CACHE__"
+echo "init: bootver=${bootver} cache=${cache}"
 
-if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9; then
+if mount -t 9p -o "trans=virtio,version=${bootver},cache=${cache}" hostshare /mnt/9; then
   echo "init: mounted hostshare at /mnt/9"
   # Ensure the Debian chroot has real /proc /sys /dev (image dirs alone are not enough).
   mkdir -p /mnt/9/proc /mnt/9/sys /mnt/9/dev
@@ -63,14 +64,30 @@ if mount -t 9p -o "trans=virtio,version=${bootver},cache=loose" hostshare /mnt/9
       dbench)
         /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'set -e; mkdir -p /workspaces/tmpdir/dbench; /workspaces/tmp/testbin/dbench/dbench -t 30 -c /workspaces/tmp/testbin/dbench/client.txt -D /workspaces/tmpdir/dbench 16' || rc=$?
         ;;
-      qemu-9p2000.L|diod-9p2000.L)
+      qemu-*|diod-9p2000*)
         /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
           set -euo pipefail
           tests="__V9FS_TESTS__"
           server="${tests%%-*}"
-          dialect="${tests#*-}"
+          dialect="__V9FS_BOOTVER__"
           mkdir -p /home/v9fs-test/test/logs
           /home/v9fs-test/test/scripts/v9fs-9p-protocol-tests "$server" "$dialect" 2>&1 | tee -a /home/v9fs-test/test/logs/9p-proto.log
+        ' || rc=$?
+        ;;
+      fstest)
+        /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc '
+          set -euo pipefail
+          root=/workspaces/tmp/testbin/pjdfstest
+          [ -x "$root/pjdfstest" ] || { echo "fstest: missing pjdfstest binary"; exit 2; }
+          mkdir -p /workspaces/tmpdir/fstest /home/v9fs-test/test/logs
+          cd /workspaces/tmpdir/fstest
+          prove -rv \
+            "$root/tests/mkdir" \
+            "$root/tests/rmdir" \
+            "$root/tests/open" \
+            "$root/tests/unlink" \
+            "$root/tests/rename" \
+            2>&1 | tee /home/v9fs-test/test/logs/fstest.log
         ' || rc=$?
         ;;
       diod-regression)
@@ -180,6 +197,10 @@ fi
 repo="/mnt/9/home/v9fs-test/test"
 if [ -d "$repo" ]; then
   mkdir -p "$repo/logs" || true
+  if [ -x /mnt/9/usr/sbin/chroot ] && [ -x /mnt/9/usr/bin/bash ]; then
+    /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'dmesg' >"$repo/logs/dmesg.log" 2>/dev/null || true
+    /mnt/9/usr/sbin/chroot /mnt/9 /bin/bash -lc 'cat /proc/meminfo' >"$repo/logs/meminfo.txt" 2>/dev/null || true
+  fi
   echo "${rc:-2}" >"$repo/logs/guest.exitcode" || true
   echo "init: tests=${tests} rc=${rc:-2}" >"$repo/logs/guest.log" || true
 fi
@@ -198,6 +219,8 @@ chmod +x "$init"
 
 # Bake the selected test into /init (guest environment has no V9FS_TESTS).
 sed -i "s/__V9FS_TESTS__/${V9FS_TESTS:-smoke}/g" "$init"
+sed -i "s/__V9FS_BOOTVER__/${V9FS_BOOTVER:-9p2000.L}/g" "$init"
+sed -i "s/__V9FS_CACHE__/${V9FS_CACHE:-loose}/g" "$init"
 
 # Collect required userland binaries and their shared libs from the container FS.
 mkdir -p "$work/rootfs"

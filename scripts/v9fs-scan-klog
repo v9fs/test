@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Fail if kernel BUG/Oops/WARNING/hung_task lines appear in QEMU serial or dmesg.
+#
+# Usage:
+#   v9fs-scan-klog [--allow FILE] LOG [LOG ...]
+#
+# Allow file: one extended-regex per line (comments and blanks ignored).
+# A hit is ignored when the full line matches any allow regex.
+set -euo pipefail
+
+allow_file=""
+logs=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --allow)
+      allow_file="${2:-}"
+      shift 2
+      ;;
+    --help|-h)
+      echo "usage: $0 [--allow FILE] LOG [LOG ...]" >&2
+      exit 2
+      ;;
+    --)
+      shift
+      logs+=("$@")
+      break
+      ;;
+    *)
+      logs+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "${#logs[@]}" -eq 0 ]; then
+  echo "usage: $0 [--allow FILE] LOG [LOG ...]" >&2
+  exit 2
+fi
+
+# Kernel oops/warn signatures. Intentionally not a bare "WARNING:" (userspace/QEMU).
+hit_re='kernel BUG at|\bBUG: |Oops:[[:space:]]|WARNING: CPU:|hung_task:|soft lockup:|Kernel panic'
+
+hits="$(mktemp)"
+trap 'rm -f "$hits"' EXIT
+: >"$hits"
+
+for log in "${logs[@]}"; do
+  if [ ! -f "$log" ]; then
+    echo "v9fs-scan-klog: skip missing $log"
+    continue
+  fi
+  # grep -E -n; do not fail the script when there are no matches.
+  grep -E -n "$hit_re" "$log" 2>/dev/null | sed "s|^|${log}:|" >>"$hits" || true
+done
+
+if [ ! -s "$hits" ]; then
+  echo "v9fs-scan-klog: no kernel BUG/WARN/Oops hits"
+  exit 0
+fi
+
+filtered="$(mktemp)"
+trap 'rm -f "$hits" "$filtered"' EXIT
+
+if [ -n "$allow_file" ] && [ -f "$allow_file" ]; then
+  python3 - "$allow_file" "$hits" "$filtered" <<'PY'
+import re, sys
+allow_path, hits_path, out_path = sys.argv[1:4]
+pats = []
+for line in open(allow_path, encoding="utf-8", errors="replace"):
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    pats.append(re.compile(line))
+with open(out_path, "w", encoding="utf-8") as out:
+    for raw in open(hits_path, encoding="utf-8", errors="replace"):
+        # raw is "path:lineno:line"
+        parts = raw.split(":", 2)
+        body = parts[2] if len(parts) >= 3 else raw
+        if any(p.search(body) for p in pats):
+            continue
+        out.write(raw)
+PY
+else
+  cp -f "$hits" "$filtered"
+fi
+
+if [ ! -s "$filtered" ]; then
+  echo "v9fs-scan-klog: hits present but all allowlisted"
+  exit 0
+fi
+
+echo "v9fs-scan-klog: unexpected kernel BUG/WARN/Oops:"
+cat "$filtered"
+n="$(wc -l <"$filtered" | tr -d ' ')"
+echo "v9fs-scan-klog: $n unexpected line(s)"
+exit 1

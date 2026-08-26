@@ -215,6 +215,7 @@ jobs:
 
   publish-upstream-tip:
     needs: sync
+    # Manual opt-in remains; schedule also publishes when SHA changed (#5/#6).
     if: github.event_name == 'workflow_dispatch' && inputs.publish_upstream_tip
     runs-on: ubuntu-latest
     steps:
@@ -236,3 +237,32 @@ jobs:
             -f linux_repository=v9fs/linux \
             -f linux_ref=upstream \
             -f release_tag=kernel-main
+
+  publish-maintainer-refs:
+    needs: sync
+    # Nightly-ish: every successful sync (schedule + dispatch). Skip when SHA
+    # already recorded on the release notes (#5, #6).
+    if: always() && needs.sync.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness (publish helper)
+        uses: actions/checkout@v4
+
+      - name: Ensure GitHub CLI
+        run: |
+          set -euo pipefail
+          command -v gh >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gh
+          }
+
+      - name: Publish kernel-main / for-next / fixes if SHA changed
+        env:
+          GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/v9fs-maybe-publish-ref
+          ./scripts/v9fs-maybe-publish-ref upstream kernel-main
+          ./scripts/v9fs-maybe-publish-ref ericvh/for-next kernel-for-next
+          ./scripts/v9fs-maybe-publish-ref fixes/next kernel-fixes

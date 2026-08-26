@@ -1,5 +1,12 @@
 ## Unreleased
 
+- Docs: README/TODO match current workflows (`ci.yml`, publish, sync); drop stale `demand.yml`/`nightly.yml` (#3, #15).
+- Fail guest-direct runs on kernel BUG/Oops/`WARNING: CPU:`/`hung_task` in qemu serial or `dmesg` (`scripts/v9fs-scan-klog`, `klog/allow.txt`) (#4).
+- Sync publishes `kernel-main` / `kernel-for-next` / `kernel-fixes` when those `v9fs/linux` SHAs change; record SHA in Image release notes (#5, #6).
+- Add `fstest` suite (pjdfstest mkdir/rmdir/open/unlink/rename subset) (#7).
+- Add kconfig compile-only workflow (`9p-builtin` / `9p-modules` / `9p-noacl`) and `qemu-9p2000.L-none` (`cache=none`) (#8).
+- Add qemu `9p2000` and `9p2000.u` protocol matrix cells; skip legacy-only ops on bare 9p2000 (#10).
+- Collect `dmesg.log`, `meminfo.txt`, and `metrics.json` (dbench throughput / MemAvailable) per run (#11).
 - Instrument diod `t0010` first `access=<uid>` mount (stderr/dmesg/diod log), pin `version=9p2000.L`, pre-create export, `Defaults !requiretty`, and force a fresh patched build stamp so CI can triage residual non-root mount failures.
 - Fix non-root `ACCESS_SINGLE` mounts across diod sharness: `scripts/v9fs-mount-9p` + trash on `/tmp`; t0010 runasuser now expected PASS including root-negatives.
 - Run diod sharness as non-root user `v9fs` (so ACCESS_SINGLE / `--runas` negatives work); per-test `timeout` via automake `LOG_COMPILER` instead of one outer suite timeout.

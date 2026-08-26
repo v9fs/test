@@ -5,7 +5,7 @@ Tweak freely.
 
 ## Branching and change hygiene
 
-- Do active work on `rework` unless told otherwise.
+- Do active work on `main` unless told otherwise.
 - Keep `README.md`, `CHANGES.md`, and `TODO.md` updated as changes land.
 - Do not commit generated outputs (`logs/`, `kernel/`, `tmp/`, `initrd.cpio`, pid files).
 
