@@ -1,5 +1,6 @@
 ## Unreleased
 
+- Bump Actions off Node 20: `actions/checkout@v4` → `@v7` and `actions/upload-artifact@v4` → `@v7` in harness CI, sync, and publish (runners already force Node 24).
 - Kick off kernel Image publish + harness tests from sync when it finds work (#6):
   - Fix `v9fs-newest-v6-tag` so piped tags reach Python (`python3 -c`, not a stdin heredoc). The old helper always printed nothing, so `latest_tag` was empty and scheduled publish never ran.
   - List v6+ tags with `git ls-remote` (`scripts/v9fs-list-remote-v6-tags`) instead of `gh api repos/torvalds/linux/tags` (fine-grained `V9FS_LINUX_SYNC_TOKEN` cannot read that public repo; a failing `gh api` in process substitution was silent).

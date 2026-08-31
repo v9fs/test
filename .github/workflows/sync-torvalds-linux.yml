@@ -68,7 +68,7 @@ jobs:
           gh --version
 
       - name: Checkout harness (tag helpers)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sync upstream branch + track new v6+ tags
         id: mirror

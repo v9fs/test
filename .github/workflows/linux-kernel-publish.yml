@@ -50,10 +50,10 @@ jobs:
       V9FS_DOCKER_IMAGE: ghcr.io/v9fs/docker:latest
     steps:
       - name: Checkout harness (scripts)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout kernel
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.linux_repository || github.event.client_payload.linux_repository || 'v9fs/linux' }}
           ref: ${{ inputs.linux_ref || github.event.client_payload.linux_ref || 'main' }}
