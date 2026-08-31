@@ -1,5 +1,8 @@
 name: Harness CI
 
+# After linux-kernel-publish.yml completes, workflow_run resolve parses that
+# run's display title (run-name: "Publish <release_tag> from <linux_ref>").
+
 on:
   push:
   workflow_dispatch:
@@ -47,13 +50,21 @@ jobs:
             kr="${{ inputs.kernel_release }}"
             lr="${{ inputs.linux_ref }}"
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # Tip publishes refresh kernel-latest; use that floating Image.
-            kr="kernel-latest"
-            lr=""
-            # Best-effort: parse concrete tag from the publish run display title / jobs.
+            # Contract with linux-kernel-publish.yml run-name:
+            #   Publish <release_tag> from <linux_ref>
             pub_id="${{ github.event.workflow_run.id }}"
             title="$(gh run view "$pub_id" --repo "${{ github.repository }}" --json displayTitle --jq .displayTitle || true)"
             echo "triggering publish: $title"
+            kr=""
+            lr=""
+            if [[ "${title}" =~ ^Publish[[:space:]]+([^[:space:]]+)[[:space:]]+from[[:space:]]+(.+)$ ]]; then
+              kr="${BASH_REMATCH[1]}"
+              lr="${BASH_REMATCH[2]}"
+            fi
+            if [ -z "${kr}" ]; then
+              kr="kernel-latest"
+              lr=""
+            fi
           else
             # push: exercise harness against current tip Image when present.
             kr="kernel-latest"
@@ -213,10 +224,11 @@ jobs:
           path: report-out
           retention-days: 30
 
-      - name: Attach results.json to kernel-latest (best-effort)
+      - name: Attach results.json to the tested release (best-effort)
         if: always()
         env:
           GH_TOKEN: ${{ secrets.V9FS_LINUX_SYNC_TOKEN }}
+          KERNEL_RELEASE: ${{ needs.resolve.outputs.kernel_release }}
         run: |
           set -euo pipefail
           if [ ! -f report-out/results.json ]; then
@@ -227,5 +239,13 @@ jobs:
             echo "V9FS_LINUX_SYNC_TOKEN unset; skip release attach"
             exit 0
           fi
-          gh release view kernel-latest >/dev/null 2>&1 || exit 0
-          gh release upload kernel-latest report-out/results.json report-out/diff-report.md --clobber || true
+          gh release view "$KERNEL_RELEASE" >/dev/null 2>&1 || {
+            echo "release ${KERNEL_RELEASE} missing; skip attach"
+            exit 0
+          }
+          gh release upload "$KERNEL_RELEASE" report-out/results.json report-out/diff-report.md --clobber || true
+          # Keep kernel-latest tip history when this run tested a kernel-v* Image.
+          if [ "$KERNEL_RELEASE" != "kernel-latest" ] && [[ "$KERNEL_RELEASE" == kernel-v* ]]; then
+            gh release view kernel-latest >/dev/null 2>&1 || exit 0
+            gh release upload kernel-latest report-out/results.json report-out/diff-report.md --clobber || true
+          fi

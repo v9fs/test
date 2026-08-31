@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# List unique v6+ tag names from a git remote via `git ls-remote`.
+#
+# Do not use the GitHub tags REST API for torvalds/linux: a fine-grained
+# V9FS_LINUX_SYNC_TOKEN scoped to v9fs/* cannot read that public repo, and
+# `gh api` inside a process substitution then fails silently (empty list).
+set -euo pipefail
+
+url="${1:?usage: v9fs-list-remote-v6-tags <git-url>}"
+
+export GIT_TERMINAL_PROMPT=0
+
+git ls-remote --tags "${url}" 'v6.*' 'v7.*' 'v8.*' 'v9.*' 'v1[0-9].*' \
+  | awk '{print $2}' \
+  | sed -e 's#refs/tags/##' -e 's#\^{}$##' \
+  | awk '/^v([6-9]|[1-9][0-9])/ { print }' \
+  | sort -u

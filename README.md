@@ -42,9 +42,9 @@ Kernel **build** and **test** are separate. Images are GitHub Release assets (`I
 
 | Workflow | File | When |
 | --- | --- | --- |
-| **Sync torvalds/linux** | `.github/workflows/sync-torvalds-linux.yml` | Every 6h + manual. Fast-forwards `v9fs/linux` `upstream`, tracks new **v6+** tags, and can `gh workflow run` publish for the newest tag (`kernel-<tag>` + `kernel-latest`). |
-| **Publish Linux kernel** | `.github/workflows/linux-kernel-publish.yml` | Manual `workflow_dispatch`, or `gh workflow run` from sync. Optional `repository_dispatch` (`publish-kernel-image`) for emergencies — **not** fired from `v9fs/linux`. Builds arm64 `Image` with 9p options enabled. |
-| **Harness CI** | `.github/workflows/ci.yml` | Push, manual, or `workflow_run` after a successful publish. Downloads `kernel-latest` by default. |
+| **Sync torvalds/linux** | `.github/workflows/sync-torvalds-linux.yml` | Every 6h + manual. Fast-forwards `v9fs/linux` `upstream`, tracks new **v6+** tags via `git ls-remote` (not the GitHub tags API). `gh workflow run` publish when (a) the newest v6+ tag is newly synced or has no `kernel-<tag>` Image yet (`kernel-<tag>` + `kernel-latest`, and `kernel-main` if that tag is the upstream tip), or (b) `upstream` SHA moved (`kernel-main`). |
+| **Publish Linux kernel** | `.github/workflows/linux-kernel-publish.yml` | Manual `workflow_dispatch`, or `gh workflow run` from sync. Optional `repository_dispatch` (`publish-kernel-image`) for emergencies — **not** fired from `v9fs/linux`. Builds arm64 `Image` with 9p options enabled. `run-name` is `Publish <release_tag> from <linux_ref>` so Harness CI can test that Image. |
+| **Harness CI** | `.github/workflows/ci.yml` | Push, manual, or `workflow_run` after a successful publish. After publish, downloads the release named in that run (not always `kernel-latest`). Push/manual default to `kernel-latest`. |
 
 There are no `demand.yml` or `nightly.yml` workflows. Those names were from the take-1 harness and only existed as a snapshot under `old/rework-take-1/` (removed).
 

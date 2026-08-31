@@ -3,7 +3,11 @@
 # Triggers: workflow_dispatch here, or `gh workflow run` from
 # sync-torvalds-linux.yml. repository_dispatch (publish-kernel-image) is
 # emergency/manual only — linux is mirror-only and must not fire it.
+#
+# run-name is parsed by ci.yml (workflow_run) so harness tests the Image
+# that this job published: "Publish <release_tag> from <linux_ref>".
 name: Publish Linux kernel (arm64 Image)
+run-name: Publish ${{ inputs.release_tag || github.event.client_payload.release_tag || 'kernel-main' }} from ${{ inputs.linux_ref || github.event.client_payload.linux_ref || 'main' }}
 
 on:
   repository_dispatch:
@@ -27,6 +31,11 @@ on:
         type: string
       also_latest:
         description: 'Also clobber the floating kernel-latest release with the same Image'
+        required: false
+        default: false
+        type: boolean
+      also_main:
+        description: 'Also clobber kernel-main with the same Image (tag publish that matches upstream tip)'
         required: false
         default: false
         type: boolean
@@ -89,12 +98,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.release_tag || github.event.client_payload.release_tag || 'kernel-main' }}
           ALSO_LATEST: ${{ inputs.also_latest || github.event.client_payload.also_latest || false }}
+          ALSO_MAIN: ${{ inputs.also_main || github.event.client_payload.also_main || false }}
           LINUX_REF: ${{ inputs.linux_ref || github.event.client_payload.linux_ref || 'main' }}
         run: |
           set -euo pipefail
           img="kernel/.build/arch/arm64/boot/Image"
           test -f "$img"
           cp -f "$img" Image
+          sha="$(git -C linux rev-parse HEAD)"
 
           publish_one() {
             local tag="$1"
@@ -105,10 +116,14 @@ jobs:
             echo "Published Image -> release $tag"
           }
 
-          publish_one "$TAG" "Automated arm64 kernel Image from ${LINUX_REF}."
+          publish_one "$TAG" "Automated arm64 kernel Image from ${LINUX_REF} (${sha})."
 
           # Floating alias for harness default / wiki “current tip” comparisons.
           if [ "${ALSO_LATEST}" = "true" ]; then
-            publish_one "kernel-latest" "Floating latest Image (currently ${LINUX_REF} / ${TAG})."
+            publish_one "kernel-latest" "Floating latest Image (currently ${LINUX_REF} / ${TAG}, ${sha})."
+          fi
+
+          if [ "${ALSO_MAIN}" = "true" ] && [ "$TAG" != "kernel-main" ]; then
+            publish_one "kernel-main" "Automated arm64 kernel Image from ${LINUX_REF} (${sha})."
           fi
 
