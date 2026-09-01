@@ -1,5 +1,11 @@
 ## Unreleased
 
+- Bump Actions off Node 20: `actions/checkout@v4` → `@v7` and `actions/upload-artifact@v4` → `@v7` in harness CI, sync, and publish (runners already force Node 24).
+- Kick off kernel Image publish + harness tests from sync when it finds work (#6):
+  - Fix `v9fs-newest-v6-tag` so piped tags reach Python (`python3 -c`, not a stdin heredoc). The old helper always printed nothing, so `latest_tag` was empty and scheduled publish never ran.
+  - List v6+ tags with `git ls-remote` (`scripts/v9fs-list-remote-v6-tags`) instead of `gh api repos/torvalds/linux/tags` (fine-grained `V9FS_LINUX_SYNC_TOKEN` cannot read that public repo; a failing `gh api` in process substitution was silent).
+  - Schedule: publish the newest v6+ tag if it was newly tracked **or** `kernel-<tag>` is missing (recovers `v7.3-rc1`); publish `kernel-main` when `upstream` SHA moved (same Image as the tag when they match).
+  - Publish `run-name` is `Publish <release_tag> from <linux_ref>`; harness `workflow_run` tests that release, not always `kernel-latest`.
 - Docs: README/TODO/AGENTS match live workflows (`ci.yml`, publish, sync); drop stale `demand.yml`/`nightly.yml` snapshot under `old/rework-take-1/` (#3). Header comment on `linux-kernel-publish.yml` records the test-repo-only trigger contract.
 - Ignore local `.env` (`GH_TOKEN` for host-side `gh` / `act`); do not pass it into the guest.
 - Instrument diod `t0010` first `access=<uid>` mount (stderr/dmesg/diod log), pin `version=9p2000.L`, pre-create export, `Defaults !requiretty`, and force a fresh patched build stamp so CI can triage residual non-root mount failures.

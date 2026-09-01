@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
-# Emit newest v6+ tag name from stdin (one tag per line) using kernel-aware ordering:
-# releases outrank same-version -rcN (v7.2 > v7.2-rc7).
+# Emit newest v6+ tag name(s) from stdin (one tag per line) using kernel-aware
+# ordering: releases outrank same-version -rcN (v7.2 > v7.2-rc7).
+#
+# Usage:
+#   v9fs-newest-v6-tag           # single newest tag
+#   v9fs-newest-v6-tag 40        # up to N newest tags, newest first
+#
+# Must use python3 -c (not a stdin heredoc) so piped/redirected tags reach Python.
 set -euo pipefail
-python3 - <<'PY'
-import re, sys
+count="${1:-}"
+if [ -n "${count}" ] && ! [[ "${count}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "usage: v9fs-newest-v6-tag [count]" >&2
+  exit 2
+fi
+export V9FS_NEWEST_COUNT="${count}"
+exec python3 -c '
+import os, re, sys
 tags = [ln.strip() for ln in sys.stdin if ln.strip()]
+count_s = (os.environ.get("V9FS_NEWEST_COUNT") or "").strip()
+count = int(count_s) if count_s else None
 
 def major_ge_6(n: str) -> bool:
     m = re.match(r"^v(\d+)", n)
@@ -25,5 +39,10 @@ def key(n: str):
 cands = [t for t in tags if major_ge_6(t)]
 if not cands:
     sys.exit(0)
-print(sorted(cands, key=key)[-1])
-PY
+ordered = sorted(cands, key=key)
+if count is None:
+    print(ordered[-1])
+else:
+    for t in reversed(ordered[-count:]):
+        print(t)
+'
