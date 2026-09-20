@@ -9,7 +9,7 @@ build_link="${DIOD_BUILD:-/workspaces/tmp/diod-build}"
 repo="${DIOD_REPO:-https://github.com/chaos/diod}"
 ref="${DIOD_REF:-master}"
 # Bump when harness patches change so CI does not reuse a stale content-addressed build.
-patch_stamp="${DIOD_PATCH_STAMP:-mount-helper-v12}"
+patch_stamp="${DIOD_PATCH_STAMP:-t0011-squashuser-v1}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -119,6 +119,16 @@ for path in sorted((src / "t").glob("t*.t")):
         )
         if old_under in text:
             text = text.replace(old_under, new_under, 1)
+    if path.name == "t0011-v9fs-allsquash.t":
+        # Default squashuser is nobody (65534). t0011 asserts exp/ ownership
+        # equals $(id -u):$(id -g) and later writes as the runner; pass the
+        # runner as squashuser instead of changing those assertions.
+        old_as = "    --allsquash \\\n"
+        new_as = "    --allsquash \\\n    --squashuser=$(id -un) \\\n"
+        if "--squashuser=" not in text:
+            if old_as not in text:
+                raise SystemExit("t0011: --allsquash block not found")
+            text = text.replace(old_as, new_as, 1)
     if text != orig:
         path.write_text(text)
         patched += 1
@@ -193,6 +203,7 @@ if grep -rhq 'test_under_diod unixsocket ' "${src}/t" --include='*.t' 2>/dev/nul
 fi
 grep -q 'v9fs_access_mount' "${src}/t/t0010-v9fs-runasuser.t"
 grep -q 'v9fs_access_mount' "${src}/t/t0020-dbench.t"
+grep -q -- '--squashuser=$(id -un)' "${src}/t/t0011-v9fs-allsquash.t"
 grep -q 'V9FS_MOUNT_9P' "${src}/t/sharness.d/20-diod.sh"
 grep -q '/tmp/sharness-trash' "${src}/t/sharness.sh"
 
