@@ -1,5 +1,7 @@
 ## Unreleased
 
+- diod-regression: mount a native guest tmpfs on `/tmp` inside the chroot before sharness (#28 / agent-team#6). Hostshare `FSDEV_PATH=/` made `/tmp` 9p-backed, so Image `TMPFS_XATTR` alone left t0013 at EOPNOTSUPP. Local `/tmp` setfacl probe is a hard gate. Drop t0013 rows from `diod/xfail.txt` after CI PASS (17/17).
+
 - Publish Image: explicit `-e TMPFS_XATTR` alongside `TMPFS_POSIX_ACL` so guest `/tmp` (sharness export) can host POSIX ACL xattrs for t0013 (#28 / agent-team#6). Protocol kconfig dump also records `CONFIG_TMPFS*`. Does **not** drop t0013 XFAIL yet — needs republished Image + PASS. No loopback/ext4 trash mount.
 
 - Scan QEMU serial + guest dmesg for `BUG`/`WARNING`/`Oops`/`hung_task` (#4). Smoke and protocol suites fail the job on non-allowlisted hits; other suites record counts. Wiki Notes get a klog column.
