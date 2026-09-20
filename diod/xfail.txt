@@ -11,16 +11,9 @@
 # t0010 runasuser ACCESS_SINGLE / root-negative assertions are expected to PASS
 # when the suite runs as non-root `v9fs` with v9fs-mount-9p.
 #
+# t0011 allsquash: harness patches `--squashuser=$(id -un)` so exp/ ownership
+# matches the runner (default squashuser nobody / 65534 was the XFAIL). See
+# v9fs/test#28 / #31 and agent-team#5.
+#
 # t0013 ACL: guest-native tmpfs on /tmp (not 9p hostshare) + Image TMPFS_XATTR
 # make setfacl/getfacl round-trips PASS (v9fs/test#33 / agent-team#6).
-
-# allsquash identity mapping gaps under guest harness
-# (cleared by --squashuser=$(id -un) on [v9fs/test#31](https://github.com/v9fs/test/pull/31))
-t0011-v9fs-allsquash.t :: root can create a directory, mode 755
-t0011-v9fs-allsquash.t :: nobody can create a directory, mode 755
-t0011-v9fs-allsquash.t :: nobody cannot create a file in nobody directory
-t0011-v9fs-allsquash.t :: user can create a file in rootdir
-t0011-v9fs-allsquash.t :: user can create a file in nobodydir
-t0011-v9fs-allsquash.t :: user can chmod 777 nobody directory
-t0011-v9fs-allsquash.t :: exited with status 1
-t0011-v9fs-allsquash :: automake error/timeout
