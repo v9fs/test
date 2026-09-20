@@ -91,12 +91,32 @@ chmod -R a+rX "logs/${TIMESTAMP}" 2>/dev/null || true
 guest_rc_file="logs/${TIMESTAMP}/guest.exitcode"
 guest_rc_src="logs/guest.exitcode"
 guest_log_src="logs/guest.log"
+dmesg_src="logs/dmesg.log"
+dmesg_file="logs/${TIMESTAMP}/dmesg.log"
 
 if [ -f "${guest_rc_src}" ]; then
   cp -f "${guest_rc_src}" "${guest_rc_file}" 2>/dev/null || true
 fi
 if [ -f "${guest_log_src}" ]; then
   cp -f "${guest_log_src}" "logs/${TIMESTAMP}/guest.log" 2>/dev/null || true
+fi
+if [ -f "${dmesg_src}" ]; then
+  cp -f "${dmesg_src}" "${dmesg_file}" 2>/dev/null || true
+fi
+
+klog_json="logs/${TIMESTAMP}/klog.json"
+scan_rc=0
+./scripts/v9fs-scan-klog --suite "${tests}" --json "${klog_json}" \
+  "${QEMULOG}" "${dmesg_file}" || scan_rc=$?
+
+# Enforce kernel log hits on smoke + protocol suites. Other suites record
+# counts only until the allowlist is proven quiet (V9FS_KLOG_ENFORCE=1/0).
+enforce="${V9FS_KLOG_ENFORCE:-}"
+if [ -z "${enforce}" ]; then
+  case "${tests}" in
+    smoke|qemu-9p2000.L|diod-9p2000.L) enforce=1 ;;
+    *) enforce=0 ;;
+  esac
 fi
 
 if [ ! -f "${guest_rc_file}" ]; then
@@ -110,5 +130,10 @@ if [ "${guest_rc}" != "0" ]; then
   exit "${guest_rc}"
 fi
 
-echo "OK: guest rc=0 (logs at logs/${TIMESTAMP}/)"
+if [ "${enforce}" = "1" ] && [ "${scan_rc}" != "0" ]; then
+  echo "klog scan failed for ${tests} (rc=${scan_rc}); see ${klog_json}"
+  exit "${scan_rc}"
+fi
+
+echo "OK: guest rc=0 klog_rc=${scan_rc} enforce=${enforce} (logs at logs/${TIMESTAMP}/)"
 

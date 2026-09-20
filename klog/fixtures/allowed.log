@@ -1,0 +1,2 @@
+[    4.000000] WARNING: CPU: 0 PID: 1 at drivers/firmware/efi/libstub/fdt.c:1 efi_stub
+qemu-system-aarch64: warning: TCG doesn't support requested feature

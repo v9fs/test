@@ -1,7 +1,11 @@
-.PHONY: docker-smoke docker-clean docker-clean-aggressive
+.PHONY: docker-smoke docker-clean docker-clean-aggressive klog-selftest
 
 IMAGE ?= ghcr.io/v9fs/docker:latest
 KERNEL_RELEASE ?= kernel-main
+
+klog-selftest:
+	@chmod +x ./scripts/v9fs-scan-klog ./scripts/v9fs-scan-klog-selftest
+	@./scripts/v9fs-scan-klog-selftest
 
 docker-smoke:
 	mkdir -p ./tmp ./kernel

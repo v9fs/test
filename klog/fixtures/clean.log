@@ -1,0 +1,5 @@
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]
+[    0.123456] 9pnet: Installing 9P2000 support
+[    0.234567] 9p: Installing v9fs 9p2000 file system support
+init: tests=smoke
+[    1.000000] random: crng init done

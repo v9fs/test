@@ -180,6 +180,12 @@ fi
 repo="/mnt/9/home/v9fs-test/test"
 if [ -d "$repo" ]; then
   mkdir -p "$repo/logs" || true
+  # Dump guest dmesg for BUG/WARN scanning (#4) before poweroff.
+  if [ -x /mnt/9/usr/bin/dmesg ]; then
+    /mnt/9/usr/sbin/chroot /mnt/9 /usr/bin/dmesg >"$repo/logs/dmesg.log" 2>/dev/null || true
+  elif [ -x /mnt/9/bin/dmesg ]; then
+    /mnt/9/usr/sbin/chroot /mnt/9 /bin/dmesg >"$repo/logs/dmesg.log" 2>/dev/null || true
+  fi
   echo "${rc:-2}" >"$repo/logs/guest.exitcode" || true
   echo "init: tests=${tests} rc=${rc:-2}" >"$repo/logs/guest.log" || true
 fi

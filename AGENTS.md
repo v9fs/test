@@ -46,8 +46,10 @@ Tweak freely.
 - Always preserve logs for failures (artifact upload `if: always()`).
 - When tests fail, also dump the relevant tails into the CI console output:
   - `logs/*/qemu.log`
+  - `logs/*/klog.json`
   - per-test `*.log`
   - `guest.exitcode` markers (or equivalent)
+- Kernel BUG/WARN scanning is `scripts/v9fs-scan-klog`. Do not treat a green userspace exit as success if smoke/protocol klog fail is non-zero.
 
 ## Style
 

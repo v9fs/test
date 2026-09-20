@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Scan QEMU serial + guest dmesg for `BUG`/`WARNING`/`Oops`/`hung_task` (#4). Smoke and protocol suites fail the job on non-allowlisted hits; other suites record counts. Wiki Notes get a klog column.
+
 - Bump Actions off Node 20: `actions/checkout@v4` → `@v7` and `actions/upload-artifact@v4` → `@v7` in harness CI, sync, and publish (runners already force Node 24).
 - Kick off kernel Image publish + harness tests from sync when it finds work (#6):
   - Fix `v9fs-newest-v6-tag` so piped tags reach Python (`python3 -c`, not a stdin heredoc). The old helper always printed nothing, so `latest_tag` was empty and scheduled publish never ran.

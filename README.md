@@ -19,7 +19,7 @@ docker pull ghcr.io/v9fs/docker:latest
 make docker-smoke
 ```
 
-Logs land under `./logs/<timestamp>/` (`qemu.log`, `guest.log`, `guest.exitcode`).
+Logs land under `./logs/<timestamp>/` (`qemu.log`, `guest.log`, `guest.exitcode`, `dmesg.log`, `klog.json`). After each suite, `scripts/v9fs-scan-klog` greps serial + dmesg for `BUG`/`WARNING`/`Oops`/`hung_task` ([#4](https://github.com/v9fs/test/issues/4)). Smoke and protocol suites fail on non-allowlisted hits (`klog/allow.txt`); fsx/dbench/diod record counts only. `make klog-selftest` runs fixture checks without QEMU.
 
 Other suites (same Docker + Image):
 
