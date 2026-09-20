@@ -8,5 +8,5 @@
 - Kconfig / cache-mode sweep (#8).
 - Memory/ops metrics over time (#11).
 - Dashboard history + optional bisection (#2).
-- Shrink diod XFAIL: `t0011-v9fs-allsquash` ([test#31](https://github.com/v9fs/test/pull/31)); `t0013-v9fs-acl` after guest `/tmp` tmpfs mount + Image `TMPFS_XATTR` (agent-team#6).
+- Shrink diod XFAIL: `t0011-v9fs-allsquash` ([test#31](https://github.com/v9fs/test/pull/31)); t0013 cleared by guest `/tmp` tmpfs + Image `TMPFS_XATTR` ([test#33](https://github.com/v9fs/test/pull/33)).
 - u-root/cpu for richer guest tooling (optional).
