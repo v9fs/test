@@ -1,5 +1,7 @@
 ## Unreleased
 
+- Publish Image: explicit `-e TMPFS_XATTR` alongside `TMPFS_POSIX_ACL` so guest `/tmp` (sharness export) can host POSIX ACL xattrs for t0013 (#28 / agent-team#6). Protocol kconfig dump also records `CONFIG_TMPFS*`. Does **not** drop t0013 XFAIL yet — needs republished Image + PASS. No loopback/ext4 trash mount.
+
 - Scan QEMU serial + guest dmesg for `BUG`/`WARNING`/`Oops`/`hung_task` (#4). Smoke and protocol suites fail the job on non-allowlisted hits; other suites record counts. Wiki Notes get a klog column.
 
 - Bump Actions off Node 20: `actions/checkout@v4` → `@v7` and `actions/upload-artifact@v4` → `@v7` in harness CI, sync, and publish (runners already force Node 24).

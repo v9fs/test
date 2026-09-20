@@ -82,7 +82,7 @@ jobs:
                 "$cfg" --file "$out/.config" \
                   -e NET_9P -e NET_9P_FD -e NET_9P_VIRTIO -e 9P_FS \
                   -e 9P_FS_POSIX_ACL -e 9P_FS_SECURITY -e 9P_FS_XATTR \
-                  -e FS_POSIX_ACL -e TMPFS_POSIX_ACL \
+                  -e FS_POSIX_ACL -e TMPFS_POSIX_ACL -e TMPFS_XATTR \
                   -e UNIX -e VIRTIO_PCI -e PCI; \
                 make -C /workspaces/linux O="$out" olddefconfig; \
               else \
