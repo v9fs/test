@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Scan QEMU serial and guest dmesg for kernel BUG/WARN/Oops/hung-task.
+
+Usage:
+  v9fs-scan-klog [--allow FILE] [--json OUT] [--suite NAME] LOG [LOG...]
+
+Exit 0 if there are no non-allowlisted fail hits (bug/oops/hung/warn).
+Exit 1 if there are fail hits. Exit 2 on usage/input errors.
+Missing log files are skipped with a note (not an error).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_ALLOW = REPO_ROOT / "klog" / "allow.txt"
+
+# More specific patterns first. `WARNING:` also matches `WARNING: CPU:`.
+PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("bug", re.compile(r"kernel BUG at", re.I)),
+    ("bug", re.compile(r"\bBUG:")),
+    ("bug", re.compile(r"\bOops:")),
+    ("hung", re.compile(r"\bhung_task\b")),
+    ("hung", re.compile(r"blocked for more than \d+ seconds")),
+    ("warn", re.compile(r"WARNING: CPU:")),
+    ("warn", re.compile(r"\bWARNING:")),
+    ("trace", re.compile(r"\bCall Trace:")),
+]
+
+FAIL_SEVERITIES = {"bug", "hung", "warn"}
+
+
+def load_allow(path: Path) -> list[re.Pattern[str]]:
+    if not path.is_file():
+        return []
+    compiled: list[re.Pattern[str]] = []
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        compiled.append(re.compile(line))
+    return compiled
+
+
+def classify_line(text: str) -> str | None:
+    for severity, pat in PATTERNS:
+        if pat.search(text):
+            return severity
+    return None
+
+
+def allowed(text: str, allow: list[re.Pattern[str]]) -> bool:
+    return any(p.search(text) for p in allow)
+
+
+def scan_files(paths: list[Path], allow: list[re.Pattern[str]]) -> dict:
+    hits: list[dict] = []
+    allowed_hits: list[dict] = []
+    missing: list[str] = []
+    for path in paths:
+        if not path.is_file():
+            missing.append(str(path))
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            missing.append(f"{path}: {exc}")
+            continue
+        for lineno, text in enumerate(lines, 1):
+            severity = classify_line(text)
+            if severity is None:
+                continue
+            rec = {
+                "file": str(path),
+                "line": lineno,
+                "severity": severity,
+                "text": text.strip(),
+            }
+            if allowed(text, allow):
+                allowed_hits.append(rec)
+            else:
+                hits.append(rec)
+
+    def count(items: list[dict], sev: str) -> int:
+        return sum(1 for h in items if h["severity"] == sev)
+
+    fail_hits = [h for h in hits if h["severity"] in FAIL_SEVERITIES]
+    return {
+        "bugs": count(hits, "bug"),
+        "warns": count(hits, "warn"),
+        "hung": count(hits, "hung"),
+        "traces": count(hits, "trace"),
+        "allowed": len(allowed_hits),
+        "fail": len(fail_hits),
+        "hits": hits,
+        "allowed_hits": allowed_hits,
+        "missing": missing,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("logs", nargs="+", help="qemu.log / dmesg.log paths")
+    ap.add_argument("--allow", default=str(DEFAULT_ALLOW), help="allowlist regex file")
+    ap.add_argument("--json", dest="json_out", default="", help="write JSON summary")
+    ap.add_argument("--suite", default="", help="suite name stored in JSON")
+    args = ap.parse_args()
+
+    allow_path = Path(args.allow)
+    allow = load_allow(allow_path)
+    summary = scan_files([Path(p) for p in args.logs], allow)
+    if args.suite:
+        summary["suite"] = args.suite
+    summary["allow_file"] = str(allow_path)
+
+    print(
+        "klog: "
+        f"bugs={summary['bugs']} warns={summary['warns']} hung={summary['hung']} "
+        f"traces={summary['traces']} allowed={summary['allowed']} fail={summary['fail']}"
+    )
+    for hit in summary["hits"]:
+        print(f"  {hit['severity']}: {hit['file']}:{hit['line']}: {hit['text']}")
+    if summary["missing"]:
+        print("klog: skipped missing logs:")
+        for item in summary["missing"]:
+            print(f"  {item}")
+
+    if args.json_out:
+        out = Path(args.json_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+    return 1 if summary["fail"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

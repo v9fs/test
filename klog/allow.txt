@@ -1,0 +1,11 @@
+# Known-noise allowlist for scripts/v9fs-scan-klog.
+# One Python regex per line, matched against the full log line.
+# Empty lines and # comments are ignored.
+#
+# Keep this list small. Prefer fixing the kernel over growing it.
+
+# QEMU user-mode / TCG (not a guest kernel WARNING:).
+qemu-system-.*: warning:
+# virtio-rng / EDK2 chatter that can leak onto serial on some Images.
+WARNING:.*efi/libstub
+WARNING:.*virtio_rng

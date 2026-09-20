@@ -1,0 +1,2 @@
+[    3.000000] WARNING: CPU: 0 PID: 1 at net/9p/client.c:10 9p_client_rpc+0x10/0x20
+[    3.000001] Call Trace:

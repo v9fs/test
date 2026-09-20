@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Fixture tests for scripts/v9fs-scan-klog (no QEMU).
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+scan="${root}/scripts/v9fs-scan-klog"
+fix="${root}/klog/fixtures"
+allow="${root}/klog/allow.txt"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+chmod +x "${scan}"
+
+set +e
+"${scan}" --allow "${allow}" --json "${tmp}/clean.json" "${fix}/clean.log"
+clean_rc=$?
+set -e
+[ "${clean_rc}" = "0" ] || fail "clean.log should exit 0 (got ${clean_rc})"
+python3 - "${tmp}/clean.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["fail"] == 0 and d["bugs"] == 0 and d["warns"] == 0, d
+print("ok clean")
+PY
+
+set +e
+"${scan}" --allow "${allow}" --json "${tmp}/bug.json" "${fix}/bug.log"
+bug_rc=$?
+set -e
+[ "${bug_rc}" = "1" ] || fail "bug.log should exit 1 (got ${bug_rc})"
+python3 - "${tmp}/bug.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["bugs"] == 2 and d["fail"] >= 1, d
+print("ok bug")
+PY
+
+set +e
+"${scan}" --allow "${allow}" --json "${tmp}/warn.json" "${fix}/warn.log"
+warn_rc=$?
+set -e
+[ "${warn_rc}" = "1" ] || fail "warn.log should exit 1 (got ${warn_rc})"
+python3 - "${tmp}/warn.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["warns"] == 1 and d["traces"] == 1 and d["fail"] == 1, d
+print("ok warn")
+PY
+
+set +e
+"${scan}" --allow "${allow}" --json "${tmp}/allowed.json" "${fix}/allowed.log"
+allowed_rc=$?
+set -e
+[ "${allowed_rc}" = "0" ] || fail "allowed.log should exit 0 (got ${allowed_rc})"
+python3 - "${tmp}/allowed.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["fail"] == 0 and d["allowed"] >= 1, d
+print("ok allowed")
+PY
+
+echo "v9fs-scan-klog-selftest: ok"

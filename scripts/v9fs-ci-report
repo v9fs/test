@@ -17,6 +17,7 @@ export KERNEL_RELEASE="${KERNEL_RELEASE:?}"
 export LINUX_REF="${LINUX_REF:-}"
 export OUTDIR="${OUTDIR:-.}"
 export WIKI_TOKEN="${WIKI_TOKEN:-}"
+export LOGS_ROOT="${LOGS_ROOT:-}"
 
 mkdir -p "${OUTDIR}"
 
@@ -37,6 +38,7 @@ kernel_release = os.environ["KERNEL_RELEASE"]
 linux_ref = os.environ.get("LINUX_REF") or ""
 outdir = pathlib.Path(os.environ.get("OUTDIR") or ".")
 wiki_token = (os.environ.get("WIKI_TOKEN") or "").strip()
+logs_root = (os.environ.get("LOGS_ROOT") or "").strip()
 run_url = f"https://github.com/{repo}/actions/runs/{run_id}"
 generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -59,6 +61,28 @@ for job in job_list:
     else:
         status = str(conclusion)
     suites[m.group(1)] = {"status": status, "xfail": False}
+
+klog_by_suite = {}
+if logs_root:
+    for path in pathlib.Path(logs_root).rglob("klog.json"):
+        try:
+            blob = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        name = blob.get("suite")
+        if not name:
+            continue
+        klog_by_suite[name] = {
+            "bugs": blob.get("bugs", 0),
+            "warns": blob.get("warns", 0),
+            "hung": blob.get("hung", 0),
+            "fail": blob.get("fail", 0),
+            "allowed": blob.get("allowed", 0),
+        }
+
+for name, klog in klog_by_suite.items():
+    info = suites.setdefault(name, {"status": "unknown", "xfail": False})
+    info["klog"] = klog
 
 payload = {
     "kernel_release": kernel_release,
@@ -101,8 +125,8 @@ lines = [
     f"- run: {payload['run_url']}",
     f"- generated: {payload['generated_at']}",
     "",
-    f"| Suite | Status | vs {prev_label} |",
-    "| --- | --- | --- |",
+    f"| Suite | Status | vs {prev_label} | klog |",
+    "| --- | --- | --- | --- |",
 ]
 prev_suites = (prev or {}).get("suites") or {}
 for suite, info in payload["suites"].items():
@@ -118,7 +142,14 @@ for suite, info in payload["suites"].items():
         delta = "improved"
     else:
         delta = f"{old}→{cur}"
-    lines.append(f"| {suite} | {cur} | {delta} |")
+    klog = info.get("klog") or {}
+    if klog:
+        klog_s = f"bugs={klog.get('bugs', 0)} warns={klog.get('warns', 0)} hung={klog.get('hung', 0)}"
+        if klog.get("fail"):
+            klog_s = f"FAIL {klog_s}"
+    else:
+        klog_s = ""
+    lines.append(f"| {suite} | {cur} | {delta} | {klog_s} |")
 
 diff_path = outdir / "diff-report.md"
 diff_path.write_text("\n".join(lines) + "\n")
@@ -167,8 +198,16 @@ try:
             delta = "improved"
         else:
             delta = f"{old}→{cur}"
-        note = "xfail baseline" if info.get("xfail") else ""
-        body.append(f"| {suite} | {cur} | {delta} | {note} |")
+        notes = []
+        if info.get("xfail"):
+            notes.append("xfail baseline")
+        klog = info.get("klog") or {}
+        if klog:
+            bit = f"klog bugs={klog.get('bugs', 0)} warns={klog.get('warns', 0)}"
+            if klog.get("fail"):
+                bit = "klog FAIL " + bit
+            notes.append(bit)
+        body.append(f"| {suite} | {cur} | {delta} | {' '.join(notes)} |")
     body.extend(["", f"Updated: {payload['generated_at']}", ""])
     (pathlib.Path(wdir) / "Regression-Dashboard.md").write_text("\n".join(body))
 

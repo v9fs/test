@@ -170,6 +170,11 @@ jobs:
             echo "---- $f ----"
             tail -n 250 "$f" || true
           done
+          echo "==== klog.json ===="
+          for f in logs/*/klog.json; do
+            echo "---- $f ----"
+            cat "$f" || true
+          done
 
       - name: Fix log permissions (for artifact upload)
         if: always()
@@ -203,6 +208,15 @@ jobs:
             sudo apt-get install -y --no-install-recommends gh
           }
 
+      - name: Download suite logs
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          pattern: "*-logs"
+          path: suite-logs
+          merge-multiple: false
+
       - name: Build results.json, diff, wiki dashboard
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -210,6 +224,7 @@ jobs:
           KERNEL_RELEASE: ${{ needs.resolve.outputs.kernel_release }}
           LINUX_REF: ${{ needs.resolve.outputs.linux_ref }}
           OUTDIR: report-out
+          LOGS_ROOT: suite-logs
         run: |
           set -euo pipefail
           mkdir -p report-out
